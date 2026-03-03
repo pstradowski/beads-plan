@@ -59,12 +59,16 @@ func (r *BdReader) Show(id string) (*BeadInfo, error) {
 		return nil, fmt.Errorf("bd show %s: %w", id, err)
 	}
 
-	var info BeadInfo
-	if err := json.Unmarshal(out, &info); err != nil {
+	// bd show --json returns a JSON array; unwrap the first element.
+	var infos []BeadInfo
+	if err := json.Unmarshal(out, &infos); err != nil {
 		return nil, fmt.Errorf("parsing bd show output for %s: %w", id, err)
 	}
-	info.ID = id
-	return &info, nil
+	if len(infos) == 0 {
+		return nil, fmt.Errorf("bd show %s: empty result", id)
+	}
+	infos[0].ID = id
+	return &infos[0], nil
 }
 
 // Children returns the child IDs of a bead.
