@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	profileFlag  string
-	dryRunFlag   bool
+	profileFlag   string
+	dryRunFlag    bool
 	changeDirFlag string
 )
 
@@ -204,12 +204,12 @@ func runDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[
 
 	if jsonOutput {
 		output := PlanOutput{
-			ChangeName: artifacts.ChangeName,
-			Profile:    profileName,
-			TotalTasks: tree.TotalTasks(),
-			Sections:   len(tree.Sections),
+			ChangeName:  artifacts.ChangeName,
+			Profile:     profileName,
+			TotalTasks:  tree.TotalTasks(),
+			Sections:    len(tree.Sections),
 			DepsCreated: len(edges),
-			DryRun:     true,
+			DryRun:      true,
 		}
 		return PrintJSON(output)
 	}

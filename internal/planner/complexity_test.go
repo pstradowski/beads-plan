@@ -41,9 +41,9 @@ func TestAssessComplexityMedium(t *testing.T) {
 
 func TestAssessComplexityHigh(t *testing.T) {
 	tests := []struct {
-		title   string
-		spec    string
-		design  string
+		title  string
+		spec   string
+		design string
 	}{
 		{"Refactor authentication and authorization system", "", ""},
 		{"Design distributed orchestration layer", "", ""},
