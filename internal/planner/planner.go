@@ -16,7 +16,7 @@ type PlanResult struct {
 
 // Planner orchestrates bead creation from parsed OpenSpec artifacts.
 type Planner struct {
-	Client    BeadClient
+	Client     BeadClient
 	ChangeName string
 	Priority   string // default priority for created beads
 }

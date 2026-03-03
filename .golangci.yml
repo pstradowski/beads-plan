@@ -1,0 +1,20 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    - gosimple
+
+linters-settings:
+  gocritic:
+    enabled-checks:
+      - dupBranchBody
+      - dupCase
+      - assignOp
+
+issues:
+  max-issues-per-linter: 20
+  max-same-issues: 5
