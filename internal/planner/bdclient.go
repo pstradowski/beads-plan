@@ -78,8 +78,11 @@ func (b *BdCLI) Create(opts CreateOpts) (string, error) {
 	if opts.Notes != "" {
 		args = append(args, "--notes", opts.Notes)
 	}
-	for k, v := range opts.Metadata {
-		args = append(args, "--metadata", k+"="+v)
+	if len(opts.Metadata) > 0 {
+		metaJSON, err := json.Marshal(opts.Metadata)
+		if err == nil {
+			args = append(args, "--metadata", string(metaJSON))
+		}
 	}
 
 	cmd := b.cmd(args...)
