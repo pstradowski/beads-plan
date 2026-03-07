@@ -7,14 +7,20 @@ import (
 	"strings"
 )
 
+// dependent is the nested object shape inside "dependents".
+type dependent struct {
+	ID string `json:"id"`
+}
+
 // BeadInfo holds the parsed output of bd show --json for a single bead.
 type BeadInfo struct {
-	ID       string            `json:"id"`
-	Title    string            `json:"title"`
-	Type     string            `json:"type"`
-	Status   string            `json:"status"`
-	Metadata map[string]string `json:"metadata"`
-	Children []string          `json:"children"`
+	ID         string            `json:"id"`
+	Title      string            `json:"title"`
+	Type       string            `json:"issue_type"`
+	Status     string            `json:"status"`
+	Metadata   map[string]string `json:"metadata"`
+	Dependents []dependent       `json:"dependents"`
+	Children   []string          `json:"-"` // populated from Dependents after unmarshal
 }
 
 // EpicTree holds the full hierarchy read from beads.
@@ -67,8 +73,13 @@ func (r *BdReader) Show(id string) (*BeadInfo, error) {
 	if len(infos) == 0 {
 		return nil, fmt.Errorf("bd show %s: empty result", id)
 	}
-	infos[0].ID = id
-	return &infos[0], nil
+	info := &infos[0]
+	info.ID = id
+	// Populate Children from Dependents
+	for _, d := range info.Dependents {
+		info.Children = append(info.Children, d.ID)
+	}
+	return info, nil
 }
 
 // Children returns the child IDs of a bead.

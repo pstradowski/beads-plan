@@ -76,6 +76,38 @@ Check parent bead metadata for parallelism hints:
 - **parallel**: All children can run concurrently
 - **sequential**: Execute children in order
 - **mixed**: Consult parallel_groups for wave scheduling
+
+## Workflow Integration
+
+beads-plan bridges OpenSpec and beads. It plugs into the existing OpenSpec workflow without replacing any steps:
+
+` + "```" + `
+OpenSpec artifacts          beads-plan              beads execution
+─────────────────          ──────────              ───────────────
+/opsx:new
+/opsx:continue (repeat)
+  → tasks.md ready
+                     ──→  beads-plan plan
+                           (compiles tasks.md
+                            into bead molecule)
+                                              ──→  bd ready → claim → implement → bd close
+                                                   (repeat for each unblocked task)
+                     ←──  beads-plan view
+                           (syncs bead status
+                            back to tasks.md)
+/opsx:verify
+/opsx:archive
+` + "```" + `
+
+### Step by step
+
+1. **Design** (OpenSpec, unchanged): ` + "`/opsx:new`" + ` → ` + "`/opsx:continue`" + ` until tasks.md exists
+2. **Compile** (beads-plan): ` + "`beads-plan plan <change-dir>`" + ` creates the bead molecule
+3. **Execute** (beads): ` + "`bd ready`" + ` → claim → implement → ` + "`bd close`" + ` for each task
+4. **Sync status** (beads-plan): ` + "`beads-plan view <epic-id> -o <change-dir>/tasks.md`" + ` updates tasks.md with execution progress
+5. **Verify & archive** (OpenSpec, unchanged): ` + "`/opsx:verify`" + ` → ` + "`/opsx:archive`" + `
+
+Steps 3-4 repeat as tasks are completed. Step 4 is optional but recommended before verify/archive to keep OpenSpec in sync with actual execution state.
 {{PROFILE_SECTION}}
 `
 
