@@ -104,7 +104,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating root epic: %w", err)
 	}
 
-	subEpicIDs, err := p.CreateSubEpics(rootID, taskTree.Sections)
+	subEpicIDs, err := p.CreateSubEpics(rootID, taskTree.Sections, enriched)
 	if err != nil {
 		return fmt.Errorf("creating sub-epics: %w", err)
 	}
@@ -120,10 +120,10 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	}
 
 	_ = profile // profile used indirectly via enrichment
+	_ = taskIDs // task→primary-closer map, owned by the planner for dep wiring
 
 	if jsonOutput {
-		summary := buildCompileSummary(rootID, taskTree, taskIDs, enriched)
-		return PrintJSONCompact(summary)
+		return PrintJSONCompact(buildCompileSummary(rootID, p))
 	}
 
 	fmt.Printf("Compiled epic %s with %d sections, %d tasks, %d dependencies\n",
@@ -131,32 +131,31 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// buildCompileSummary assembles the machine-readable result described by
-// the meow-test-correction-loop spec's "JSON summary contract". LeafIDs
-// and TestTaskIDs are populated in the task-number order they appear in
-// tasks.md so output is deterministic. TestTaskIDs is currently always
-// empty — the test-task detection and sub-epic compile branch land in
-// sections 5–6 of the same change.
-func buildCompileSummary(rootID string, tree *parser.TaskTree, taskIDs map[string]string, enriched map[string]planner.EnrichedTask) planner.CompileSummary {
-	summary := planner.CompileSummary{
+// buildCompileSummary copies the accumulators the planner filled during
+// bead creation into the frozen CompileSummary shape (see
+// openspec/changes/meow-openspec-execution/specs/meow-test-correction-loop/
+// spec.md §"JSON summary contract"). LeafIDs contains the execute bead
+// of each test-task sub-epic but not its run-tests-N or correct-N
+// children; TestTaskIDs contains the test-task epic IDs.
+func buildCompileSummary(rootID string, p *planner.Planner) planner.CompileSummary {
+	leafIDs := append([]string{}, p.LeafIDs...)
+	testTaskIDs := append([]string{}, p.TestTaskIDs...)
+	tiers := make(map[string]string, len(p.Tiers))
+	for k, v := range p.Tiers {
+		tiers[k] = v
+	}
+	if leafIDs == nil {
+		leafIDs = []string{}
+	}
+	if testTaskIDs == nil {
+		testTaskIDs = []string{}
+	}
+	return planner.CompileSummary{
 		RootID:      rootID,
-		LeafIDs:     []string{},
-		TestTaskIDs: []string{},
-		Tiers:       map[string]string{},
+		LeafIDs:     leafIDs,
+		TestTaskIDs: testTaskIDs,
+		Tiers:       tiers,
 	}
-	for _, s := range tree.Sections {
-		for _, t := range s.Tasks {
-			id, ok := taskIDs[t.Number]
-			if !ok {
-				continue
-			}
-			summary.LeafIDs = append(summary.LeafIDs, id)
-			if e, ok := enriched[t.Number]; ok && e.Tier != "" {
-				summary.Tiers[id] = e.Tier
-			}
-		}
-	}
-	return summary
 }
 
 func runCompileDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[string]planner.EnrichedTask, sectionParallel planner.ParallelismResult, edges []planner.DepEdge, profileName string) error {
@@ -186,10 +185,15 @@ func runCompileDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enrich
 				status = "[x]"
 			}
 			tier := ""
+			testMarker := ""
 			if e, ok := enriched[t.Number]; ok {
 				tier = fmt.Sprintf(" [%s]", e.Tier)
+				if e.IsTest {
+					testMarker = fmt.Sprintf(" [TEST:%s]", e.TestRule)
+				}
 			}
-			b.WriteString(fmt.Sprintf("    %s %s %s%s\n", status, t.Number, t.Title, tier))
+			title := planner.StripTestMarker(t.Title)
+			b.WriteString(fmt.Sprintf("    %s %s %s%s%s\n", status, t.Number, title, tier, testMarker))
 		}
 		b.WriteString("\n")
 	}

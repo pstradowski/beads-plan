@@ -25,6 +25,7 @@ type CreateOpts struct {
 	Design      string
 	SpecID      string
 	Notes       string
+	Labels      []string // passed to bd create -l label1,label2
 	Metadata    map[string]string
 }
 
@@ -77,6 +78,9 @@ func (b *BdCLI) Create(opts CreateOpts) (string, error) {
 	}
 	if opts.Notes != "" {
 		args = append(args, "--notes", opts.Notes)
+	}
+	if len(opts.Labels) > 0 {
+		args = append(args, "-l", strings.Join(opts.Labels, ","))
 	}
 	if len(opts.Metadata) > 0 {
 		metaJSON, err := json.Marshal(opts.Metadata)
