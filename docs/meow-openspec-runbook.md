@@ -14,6 +14,16 @@ This runbook is the operator's counterpart to the formula file at `.beads/formul
 
 Formula smoke test: `make test-formula` — asserts seed, required-variable enforcement, and the 14-step / 6-gate shape of the cooked formula. Run this before pouring for real.
 
+### One-time setup: register the `gate` custom type
+
+bd 1.0.0's formula pour machinery creates companion beads of type `gate` whenever a step has `gate = { type = "human" }`, but `gate` is not in bd's default issue-type whitelist (`bug|feature|task|epic|chore|decision`). Pour fails with `invalid issue type: gate` until you register it as a custom type:
+
+```sh
+bd config set types.custom '["gate"]'
+```
+
+This is persisted in the bd config database and only needs to be run once per machine. `make test-formula` checks for it and auto-applies if missing. Upstream bug tracked in `beads-plan-c45`.
+
 ## Pouring the molecule
 
 For a new OpenSpec change called `my-change`:

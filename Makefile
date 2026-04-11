@@ -14,7 +14,16 @@ test: test-formula
 # formula: seed, required-var enforcement, and a full cook round-trip
 # that verifies the step and gate counts. Runs against the example
 # fixture at $(EXAMPLE_CHANGE).
+#
+# Prereq: bd 1.0.0's formula pour machinery creates companion beads
+# of type "gate" when a step has gate={type=human}, but "gate" is
+# not in the default issue-type whitelist. Workaround: register it
+# as a custom type. This is a one-time-per-machine setup (persisted
+# in the bd config database) and is safe to re-run.
 test-formula:
+	@echo "== ensure 'gate' custom type =="
+	@bd config get types.custom 2>/dev/null | grep -q gate \
+		|| bd config set types.custom '["gate"]'
 	@echo "== formula seed =="
 	bd mol seed meow-openspec --var change_dir=$(EXAMPLE_CHANGE) --var change=example
 	@echo "== formula rejects missing required var =="
