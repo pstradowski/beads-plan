@@ -19,9 +19,13 @@ type Planner struct {
 	Client     BeadClient
 	ChangeName string
 	Priority   string // default priority for created beads
+	ParentID   string // optional parent bead; when set, the root epic becomes a child of this bead
 }
 
-// CreateRootEpic creates the top-level epic bead for the change.
+// CreateRootEpic creates the top-level epic bead for the change. When
+// ParentID is set on the Planner, the root is created as a child of that
+// bead so that an external orchestrator (e.g. a beads formula step) can
+// graft the compile output into an existing molecule.
 func (p *Planner) CreateRootEpic() (string, error) {
 	title := fmt.Sprintf("beads-plan: %s", p.ChangeName)
 	priority := p.Priority
@@ -32,6 +36,7 @@ func (p *Planner) CreateRootEpic() (string, error) {
 	id, err := p.Client.Create(CreateOpts{
 		Title:    title,
 		Type:     "epic",
+		Parent:   p.ParentID,
 		Priority: priority,
 		Metadata: map[string]string{
 			"change": p.ChangeName,
@@ -41,6 +46,20 @@ func (p *Planner) CreateRootEpic() (string, error) {
 		return "", fmt.Errorf("create root epic: %w", err)
 	}
 	return id, nil
+}
+
+// CompileSummary is the machine-readable result of a compile run, emitted
+// on stdout when `--json` is passed. It is the contract the meow-openspec
+// formula's plan step consumes to graft compiled atoms into its molecule.
+//
+// Shape is frozen by openspec/changes/meow-openspec-execution/specs/
+// meow-test-correction-loop/spec.md §"JSON summary contract". No other
+// top-level fields are emitted.
+type CompileSummary struct {
+	RootID      string            `json:"root_id"`
+	LeafIDs     []string          `json:"leaf_ids"`
+	TestTaskIDs []string          `json:"test_task_ids"`
+	Tiers       map[string]string `json:"tiers"`
 }
 
 // CreateSubEpics creates sub-epics for each section. Sections with exactly

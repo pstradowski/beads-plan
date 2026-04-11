@@ -17,9 +17,22 @@ func PrintOutput(data any, text string) {
 	}
 }
 
-// PrintJSON writes JSON to stdout.
+// PrintJSON writes pretty-indented JSON to stdout.
 func PrintJSON(data any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(data)
+}
+
+// PrintJSONCompact writes a single-line JSON object to stdout followed by
+// a newline. This is the shape the meow-openspec formula's plan step
+// captures — the CompileSummary contract mandates "exactly one line that
+// parses as a JSON object".
+func PrintJSONCompact(data any) error {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, string(b))
+	return err
 }

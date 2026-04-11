@@ -15,21 +15,9 @@ import (
 var (
 	profileFlag   string
 	dryRunFlag    bool
+	parentFlag    string
 	changeDirFlag string
 )
-
-// CompileOutput is the JSON-serializable result of the compile command.
-type CompileOutput struct {
-	RootID      string            `json:"root_id"`
-	ChangeName  string            `json:"change_name"`
-	Profile     string            `json:"profile,omitempty"`
-	TotalTasks  int               `json:"total_tasks"`
-	Sections    int               `json:"sections"`
-	DepsCreated int               `json:"deps_created"`
-	DryRun      bool              `json:"dry_run"`
-	SubEpics    map[string]string `json:"sub_epics,omitempty"`
-	TaskIDs     map[string]string `json:"task_ids,omitempty"`
-}
 
 var compileCmd = &cobra.Command{
 	Use:   "compile <change-dir>",
@@ -55,6 +43,7 @@ which invokes this command at its compile step.`,
 func init() {
 	compileCmd.Flags().StringVar(&profileFlag, "profile", "", "Provider profile for tier-to-model mapping")
 	compileCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview planned structure without creating beads")
+	compileCmd.Flags().StringVar(&parentFlag, "parent", "", "Parent bead ID: create the root epic as a child of this bead (for formula-step grafting)")
 }
 
 func runCompile(cmd *cobra.Command, args []string) error {
@@ -107,6 +96,7 @@ func runCompile(cmd *cobra.Command, args []string) error {
 	p := &planner.Planner{
 		Client:     &planner.BdCLI{},
 		ChangeName: artifacts.ChangeName,
+		ParentID:   parentFlag,
 	}
 
 	rootID, err := p.CreateRootEpic()
@@ -129,29 +119,44 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating dependencies: %w", err)
 	}
 
-	subEpicNames := make(map[string]string)
-	for i, s := range taskTree.Sections {
-		subEpicNames[s.Number+". "+s.Title] = subEpicIDs[i]
-	}
-
-	output := CompileOutput{
-		RootID:      rootID,
-		ChangeName:  artifacts.ChangeName,
-		Profile:     profileName,
-		TotalTasks:  taskTree.TotalTasks(),
-		Sections:    len(taskTree.Sections),
-		DepsCreated: depsCreated,
-		DryRun:      false,
-		SubEpics:    subEpicNames,
-		TaskIDs:     taskIDs,
-	}
-
 	_ = profile // profile used indirectly via enrichment
 
-	text := fmt.Sprintf("Compiled epic %s with %d sections, %d tasks, %d dependencies",
+	if jsonOutput {
+		summary := buildCompileSummary(rootID, taskTree, taskIDs, enriched)
+		return PrintJSONCompact(summary)
+	}
+
+	fmt.Printf("Compiled epic %s with %d sections, %d tasks, %d dependencies\n",
 		rootID, len(taskTree.Sections), taskTree.TotalTasks(), depsCreated)
-	PrintOutput(output, text)
 	return nil
+}
+
+// buildCompileSummary assembles the machine-readable result described by
+// the meow-test-correction-loop spec's "JSON summary contract". LeafIDs
+// and TestTaskIDs are populated in the task-number order they appear in
+// tasks.md so output is deterministic. TestTaskIDs is currently always
+// empty — the test-task detection and sub-epic compile branch land in
+// sections 5–6 of the same change.
+func buildCompileSummary(rootID string, tree *parser.TaskTree, taskIDs map[string]string, enriched map[string]planner.EnrichedTask) planner.CompileSummary {
+	summary := planner.CompileSummary{
+		RootID:      rootID,
+		LeafIDs:     []string{},
+		TestTaskIDs: []string{},
+		Tiers:       map[string]string{},
+	}
+	for _, s := range tree.Sections {
+		for _, t := range s.Tasks {
+			id, ok := taskIDs[t.Number]
+			if !ok {
+				continue
+			}
+			summary.LeafIDs = append(summary.LeafIDs, id)
+			if e, ok := enriched[t.Number]; ok && e.Tier != "" {
+				summary.Tiers[id] = e.Tier
+			}
+		}
+	}
+	return summary
 }
 
 func runCompileDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[string]planner.EnrichedTask, sectionParallel planner.ParallelismResult, edges []planner.DepEdge, profileName string) error {
@@ -196,18 +201,9 @@ func runCompileDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enrich
 		}
 	}
 
-	if jsonOutput {
-		output := CompileOutput{
-			ChangeName:  artifacts.ChangeName,
-			Profile:     profileName,
-			TotalTasks:  tree.TotalTasks(),
-			Sections:    len(tree.Sections),
-			DepsCreated: len(edges),
-			DryRun:      true,
-		}
-		return PrintJSON(output)
-	}
-
+	// --dry-run + --json is intentionally not a machine-readable path:
+	// the CompileSummary contract is only emitted on successful bead
+	// creation. Dry-run is for human preview, so print text regardless.
 	fmt.Print(b.String())
 	return nil
 }

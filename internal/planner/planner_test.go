@@ -52,6 +52,24 @@ func TestCreateRootEpic(t *testing.T) {
 	if c.Metadata["change"] != "my-change" {
 		t.Errorf("expected metadata change=my-change, got %s", c.Metadata["change"])
 	}
+	if c.Parent != "" {
+		t.Errorf("expected no parent when ParentID is unset, got %q", c.Parent)
+	}
+}
+
+func TestCreateRootEpicWithParentID(t *testing.T) {
+	mc := &mockClient{}
+	p := &Planner{Client: mc, ChangeName: "my-change", ParentID: "bd-grandparent"}
+
+	if _, err := p.CreateRootEpic(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.creates) != 1 {
+		t.Fatalf("expected 1 create call, got %d", len(mc.creates))
+	}
+	if got := mc.creates[0].Parent; got != "bd-grandparent" {
+		t.Errorf("expected parent=bd-grandparent, got %q", got)
+	}
 }
 
 func TestCreateSubEpicsMultiTask(t *testing.T) {
