@@ -67,6 +67,35 @@ Rationale: the MEOW stack already has a workflow-orchestration primitive (`bd fo
   14. archive-review     human gate — final checkpoint
 ```
 
+```mermaid
+flowchart TD
+    e[1. explore]
+    p[2. proposal]
+    pr{{3. proposal-review<br/>human gate}}
+    s[4. specs]
+    sr{{5. specs-review<br/>human gate}}
+    d[6. design]
+    dr{{7. design-review<br/>human gate}}
+    t[8. tasks]
+    tr{{9. tasks-review<br/>human gate}}
+    pl[10. plan<br/>beads-plan compile]
+    v[11. verify]
+    vr{{12. verify-review<br/>human gate}}
+    a[13. archive]
+    ar{{14. archive-review<br/>human gate}}
+
+    e --> p --> pr --> s --> sr --> d --> dr --> t --> tr --> pl --> v --> vr --> a --> ar
+
+    classDef gate fill:#fde4a5,stroke:#ca8a04,color:#422006
+    classDef mandatory fill:#fda4af,stroke:#be123c,color:#4c0519
+    classDef work fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    class pr,dr,vr,ar mandatory
+    class sr,tr gate
+    class e,p,s,d,t,pl,v,a work
+```
+
+Legend: blue boxes are work steps; yellow hexagons are human review gates; red hexagons are the four mandatory gates the user explicitly asked for (proposal, design, verify, archive). In v1 the yellow and red gates behave identically — all are hardcoded on. In v2 the yellow gates become suppressible via `--var skip_gates=specs,tasks`.
+
 All six review gates are hardcoded as mandatory in v1. The spec scenarios still describe "proposal / design / verify / archive are mandatory" as the floor the user explicitly asked for, but v1 also hardcodes `specs-review` and `tasks-review`. Net effect: more friction than the spec's "default-on-suppressible" intent, but strictly more safety — nothing is silently skipped.
 
 Rationale: the user's stated floor (proposal / design / verify / archive) is preserved. The extra two gates (`specs-review`, `tasks-review`) add friction for small changes but don't violate the floor. v2 will add conditional gates when the beads formula schema supports them — tracked in `beads-plan-c45`.

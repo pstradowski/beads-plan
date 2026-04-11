@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -76,6 +80,49 @@ func TestBuildCompileSummaryWithTestTasks(t *testing.T) {
 		if _, ok := got.Tiers[id]; !ok {
 			t.Errorf("every leaf ID must have a tier entry, missing %q", id)
 		}
+	}
+}
+
+// TestCompileFailureEmitsNoJSONOnStdout asserts the failure-path
+// scenario from meow-test-correction-loop §"JSON summary contract":
+// on non-zero exit, stdout MUST be empty so the formula's plan-step
+// capture doesn't ingest a half-written or error payload. This is
+// an integration test that runs the binary on a non-existent change
+// directory; it is skipped if the binary has not been built yet
+// (run `make build` first).
+func TestCompileFailureEmitsNoJSONOnStdout(t *testing.T) {
+	// Walk up from the test's working directory (internal/cli) to
+	// find the repo root, then look for ./build/beads-plan.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	root := wd
+	for i := 0; i < 5; i++ {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			break
+		}
+		root = filepath.Dir(root)
+	}
+	binary := filepath.Join(root, "build", "beads-plan")
+	if _, err := os.Stat(binary); err != nil {
+		t.Skipf("%s not built — run `make build` first", binary)
+	}
+
+	cmd := exec.Command(binary, "compile", "/nonexistent-path-for-compile-failure-test", "--json")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+
+	if err == nil {
+		t.Fatal("expected non-zero exit on nonexistent change dir, got success")
+	}
+	if stdout.Len() > 0 {
+		t.Errorf("stdout must be empty on compile failure, got: %q", stdout.String())
+	}
+	if stderr.Len() == 0 {
+		t.Error("stderr must contain diagnostics on compile failure, got empty")
 	}
 }
 

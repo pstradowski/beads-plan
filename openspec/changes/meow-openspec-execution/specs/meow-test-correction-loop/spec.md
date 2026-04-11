@@ -35,6 +35,25 @@ For every task classified as a test task, `beads-plan compile` SHALL replace the
 - **`run-tests-1` task** — child of `test-task`, depends on `execute`, labeled `meow:test-run`, metadata `{"iteration": 1}`.
 - **`correct-1` stub** — child of `test-task`, labeled `meow:test-correct`, metadata `{"iteration": 1}`. Starts in status `open` but is ungated; the formula's retry pattern attaches a blocker at runtime when `run-tests-1` closes failed.
 
+```mermaid
+flowchart TB
+    subgraph epic[test-task epic — labeled meow:test]
+        exec[execute<br/>carries enriched description, tier, spec_id]
+        run1[run-tests-1<br/>labeled meow:test-run]
+        c1[correct-1 stub<br/>labeled meow:test-correct]
+    end
+
+    exec -->|depends_on| run1
+    c1 -.->|ungated at compile time<br/>formula attaches retry blocker<br/>when run-tests-1 fails| run1
+
+    classDef compile fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef stub fill:#f3e8ff,stroke:#9333ea,color:#581c87
+    class exec,run1 compile
+    class c1 stub
+```
+
+The solid arrow is a compile-time `bd dep add` edge. The dashed arrow is a runtime relationship the formula creates only on test failure (v2 — in v1 the correction loop is driven manually by agents).
+
 #### Scenario: Test task compiles to four beads
 - **WHEN** `beads-plan compile` processes a detected test task
 - **THEN** the compiler creates one epic bead and three task beads under it, with the labels `meow:test`, `meow:test-run`, and `meow:test-correct` applied as described

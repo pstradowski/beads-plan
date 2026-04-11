@@ -8,19 +8,64 @@ Convert [OpenSpec](https://github.com/steveyegge/openspec) task plans into execu
 
 [MEOW](https://steve-yegge.medium.com/welcome-to-gas-town-4f25ee16dd04) (Molecular Expression of Work) is the five-layer orchestration model from Steve Yegge's Gas Town:
 
-```
-Formula → Protomolecule → Molecule → Epics → Beads
-  (TOML)    (template)     (running)   (groups)  (atoms)
+```mermaid
+flowchart LR
+    F[Formula<br/>TOML template] --> P[Protomolecule<br/>template epic]
+    P --> M[Molecule<br/>running workflow]
+    M --> E[Epics<br/>phase groups]
+    E --> B[Beads<br/>atoms of work]
+    classDef layer fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    class F,P,M,E,B layer
 ```
 
 beads-plan operates at the **Protomolecule → Molecule** transition:
 
-```
-OpenSpec tasks.md  ──→  beads-plan compile  ──→  Bead molecule
-  (protomolecule)         (compiler)             (running workflow)
+```mermaid
+flowchart LR
+    tasks[tasks.md<br/>+ proposal + design + specs] --> compile[beads-plan compile]
+    compile --> molecule[bead molecule<br/>root epic → sub-epics → enriched tasks]
+    molecule --> bdready[bd ready]
+    bdready --> agents[agents execute]
+    classDef input fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef tool fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
+    class tasks input
+    class compile,bdready tool
+    class molecule,agents output
 ```
 
 It takes a structured plan (tasks.md + specs + design) and compiles it into a dependency graph of beads that agents can execute via `bd ready`.
+
+### The `meow-openspec` formula
+
+Compiling the apply phase is only half of the story. The project also ships a beads formula, `.beads/formulas/meow-openspec.formula.toml`, that wraps the full OpenSpec lifecycle in a gated bead molecule: every phase transition is a human-in-the-loop review that must be resolved before the next phase proceeds. Pour it with:
+
+```sh
+bd mol pour meow-openspec --var change_dir=openspec/changes/my-change --var change=my-change
+```
+
+This creates fourteen beads in order — seven work phases interleaved with six mandatory human review gates — and hands them to `bd ready`:
+
+```mermaid
+flowchart TD
+    e[1 explore] --> p[2 proposal]
+    p --> pr{{3 proposal-review}}
+    pr --> s[4 specs] --> sr{{5 specs-review}}
+    sr --> d[6 design] --> dr{{7 design-review}}
+    dr --> t[8 tasks] --> tr{{9 tasks-review}}
+    tr --> pl[10 plan<br/>runs beads-plan compile]
+    pl --> v[11 verify] --> vr{{12 verify-review}}
+    vr --> a[13 archive] --> ar{{14 archive-review}}
+
+    classDef gate fill:#fde4a5,stroke:#ca8a04,color:#422006
+    classDef mandatory fill:#fda4af,stroke:#be123c,color:#4c0519
+    classDef work fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    class pr,dr,vr,ar mandatory
+    class sr,tr gate
+    class e,p,s,d,t,pl,v,a work
+```
+
+Red hexagons are the four mandatory review gates that define the floor — nothing proceeds past proposal, past design, past verify, or into archive without a human resolving the gate. Yellow hexagons are the additional specs/tasks review gates (hardcoded in v1). At each gate a reviewer runs `bd gate resolve <gate-id>` or `bd human respond <id>` to unblock the next phase.
 
 ## Installation
 

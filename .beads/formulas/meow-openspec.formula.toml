@@ -2,12 +2,12 @@ formula = "meow-openspec"
 description = """
 Full OpenSpec lifecycle as a gated bead molecule.
 
-Pours a nine-step workflow that walks an OpenSpec change from exploration
-through archive, with mandatory human-in-the-loop review gates before
-every phase transition. Agents pick up ready beads via `bd ready`, do
-the work described in each bead, and close it; human gates block
-progression until a reviewer resolves them with `bd gate resolve <id>`
-or `bd human respond <id>`.
+Pours a fourteen-step workflow that walks an OpenSpec change from
+exploration through archive: seven work phases interleaved with six
+mandatory human-in-the-loop review gates. Agents pick up ready beads
+via `bd ready`, do the work described in each bead, and close it;
+review gates block progression until a reviewer resolves them with
+`bd gate resolve <id>` or `bd human respond <id>`.
 
 Variables:
   change_dir  (required) path to the change directory, e.g.
