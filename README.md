@@ -16,8 +16,8 @@ Formula → Protomolecule → Molecule → Epics → Beads
 beads-plan operates at the **Protomolecule → Molecule** transition:
 
 ```
-OpenSpec tasks.md  ──→  beads-plan plan  ──→  Bead molecule
-  (protomolecule)         (compiler)          (running workflow)
+OpenSpec tasks.md  ──→  beads-plan compile  ──→  Bead molecule
+  (protomolecule)         (compiler)             (running workflow)
 ```
 
 It takes a structured plan (tasks.md + specs + design) and compiles it into a dependency graph of beads that agents can execute via `bd ready`.
@@ -49,17 +49,17 @@ make install
 
 ### Prerequisites
 
-- [bd](https://github.com/steveyegge/beads) — required for `plan` and `view` commands
-- [openspec](https://github.com/steveyegge/openspec) — optional, for `plan` command only
+- [bd](https://github.com/steveyegge/beads) — required for `compile` and `view` commands
+- [openspec](https://github.com/steveyegge/openspec) — optional, for `compile` command only
 
 ## Quick start
 
 ```sh
 # 1. Preview what beads-plan would create (no side effects)
-beads-plan plan --dry-run path/to/openspec/changes/my-feature
+beads-plan compile --dry-run path/to/openspec/changes/my-feature
 
 # 2. Create the beads molecule for real
-beads-plan plan path/to/openspec/changes/my-feature
+beads-plan compile path/to/openspec/changes/my-feature
 
 # 3. Start working — bd ready shows unblocked tasks
 bd ready
@@ -73,9 +73,9 @@ beads-plan prime > SKILL.md
 
 ## Commands
 
-### `beads-plan plan <change-dir>`
+### `beads-plan compile <change-dir>`
 
-Read OpenSpec artifacts from a change directory and create a nested beads epic.
+Compile an OpenSpec change directory into apply-phase beads: a nested epic, enriched leaf tasks, and dependency edges. This command is a leaf tool — for the gated OpenSpec lifecycle with human-in-the-loop checkpoints, pour the `meow-openspec` beads formula via `bd mol pour meow-openspec`, which invokes `compile` at its compile step.
 
 **What it does:**
 1. Parses `tasks.md` into sections and checkbox tasks
@@ -140,7 +140,7 @@ Config file discovery order:
 1. Current directory → parent directories (up to git root)
 2. `~/.config/beads-plan/config.toml`
 
-Use `--profile` to override: `beads-plan plan --profile openai ./changes/my-feature`
+Use `--profile` to override: `beads-plan compile --profile openai ./changes/my-feature`
 
 Without a profile, tiers are stored in metadata but no model string is resolved.
 
