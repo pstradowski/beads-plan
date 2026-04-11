@@ -44,51 +44,64 @@ Rationale: the MEOW stack already has a workflow-orchestration primitive (`bd fo
 
 ### D2. Phase structure
 
-The formula defines nine steps. Each step is a bead. Gate beads are additional beads attached to a step via the formula's `gate` field.
+**Original intent.** Nine steps — one per lifecycle phase — with gates as modifiers attached via the `gate` field, some mandatory and some suppressible via `--skip-gates`.
+
+**v1 reality.** The beads 1.0.0 formula TOML schema supports neither conditional steps based on variables nor an `exec` field, so suppression at cook-time isn't expressible. The formula instead produces **fourteen** steps: seven work phases interleaved with six mandatory human review steps (each review is its own bead with a `gate = { type = "human" }` field):
 
 ```
-  Step               Gate (human)                   Produces
-  ─────────────────  ─────────────────────────────  ─────────────────────────────
-  1. explore         skipped by default             —
-  2. proposal        proposal-accepted (mandatory)  proposal.md
-  3. specs           specs-accepted?                specs/<cap>/spec.md
-  4. design          design-accepted (mandatory)    design.md
-  5. tasks           tasks-accepted?                tasks.md
-  6. plan            —                              apply-phase epic (via beads-plan)
-  7. apply           —                              marks tasks.md [x] as done
-  8. verify          verify-accepted (mandatory)    verify report
-  9. archive         archive-accepted (mandatory)   archived change
+  Step               Produces / role
+  ─────────────────  ─────────────────────────────────────
+  1.  explore            optional context-gathering, no gate
+  2.  proposal           proposal.md
+  3.  proposal-review    human gate — blocks specs
+  4.  specs              specs/<cap>/spec.md
+  5.  specs-review       human gate — blocks design
+  6.  design             design.md
+  7.  design-review      human gate — blocks tasks
+  8.  tasks              tasks.md
+  9.  tasks-review       human gate — blocks plan
+  10. plan               compile apply-phase atoms (beads-plan compile)
+  11. verify             openspec verify pass
+  12. verify-review      human gate — blocks archive
+  13. archive            openspec archive
+  14. archive-review     human gate — final checkpoint
 ```
 
-Mandatory gates (cannot be suppressed): `proposal-accepted`, `design-accepted`, `verify-accepted`, `archive-accepted`. These four define the floor: no change proceeds past a proposal, past a design, past verification, or into archive without a human resolving a gate bead.
+All six review gates are hardcoded as mandatory in v1. The spec scenarios still describe "proposal / design / verify / archive are mandatory" as the floor the user explicitly asked for, but v1 also hardcodes `specs-review` and `tasks-review`. Net effect: more friction than the spec's "default-on-suppressible" intent, but strictly more safety — nothing is silently skipped.
 
-Optional gates (default on, suppressible via `--skip-gates=specs,tasks`): `specs-accepted`, `tasks-accepted`. The `explore` step's gate is off by default because exploration is open-ended; operators add it back with `--add-gates=explore` if they want a review before proposing.
-
-Rationale: proposal and design are where the *what* and *how* are decided — a human must sign off. Verify and archive are where the *was it actually done right* is confirmed — a human must sign off. Specs and tasks are mostly mechanical derivations from proposal + design, so their gates are on by default but suppressible for small changes where that friction isn't worth it.
+Rationale: the user's stated floor (proposal / design / verify / archive) is preserved. The extra two gates (`specs-review`, `tasks-review`) add friction for small changes but don't violate the floor. v2 will add conditional gates when the beads formula schema supports them — tracked in `beads-plan-c45`.
 
 ### D3. Gate mechanics
 
-Each gate step uses the formula `gate` field with type `human`. The gate bead is auto-created by `bd cook` when the formula is poured. It sits there blocking the next step. A reviewer inspects the artifact (e.g., reads `proposal.md`), then runs `bd gate resolve <gate-id>` (or `bd human respond <id>`). `bd mol ready --gated` picks the molecule back up and the next step unblocks.
+Each review step uses the formula `gate` field with type `human`. The gate bead is auto-created by `bd cook` when the formula is poured. It sits there blocking the review step (and therefore everything downstream). A reviewer inspects the artifact (e.g., reads `proposal.md`), then runs `bd gate resolve <gate-id>` (or `bd human respond <id>`). `bd mol ready --gated` picks the molecule back up and the next step unblocks.
 
-Gate beads carry metadata: `{"change": "<name>", "phase": "proposal", "artifact": "openspec/changes/<name>/proposal.md"}`. Operators running `bd human list` see exactly which artifact is waiting on them.
+**Review context via descriptions, not structured metadata (v1).** The original design had gate beads carry metadata `{"change": "...", "phase": "proposal", "artifact": "openspec/changes/<name>/proposal.md"}`. That's not achievable in v1: the beads 1.0.0 formula schema silently drops the `metadata` field on steps. Instead, each review step's `description` field carries the same information in prose form — which artifact to read, what to check for, the `bd gate resolve` command, and what to do if problems are found. Reviewers still get what they need via `bd show <review-bead-id>`, just as human-readable text instead of structured data.
 
-Rationale: this is what beads' `gate` subsystem was built for; reusing it keeps the tooling (`bd gate list`, `bd gate resolve`, `bd mol ready --gated`) working unchanged.
+Rationale: this is what beads' `gate` subsystem was built for; reusing it keeps the tooling (`bd gate list`, `bd gate resolve`, `bd mol ready --gated`) working unchanged. The descriptive approach is less programmable (a tool can't query "which phase is this gate about?" via `bd show --json`) but the information is preserved for the humans who actually use it.
 
-### D4. Apply phase composes with the existing planner via subprocess + JSON
+### D4. Apply phase composes with the existing planner — via step description instructions (v1), not auto-exec
 
-Step 6 (`plan`) is a formula step whose exec spec is approximately:
+**Original intent.** Step 6 (`plan`) was going to be a formula step whose `exec` field invoked `beads-plan compile {{change_dir}} --parent {{self.bead_id}} --json` and captured the JSON summary into an `apply_compile` name for downstream steps to reference.
 
-```toml
-[[steps]]
-id = "plan"
-title = "Compile apply-phase atoms"
-exec = "beads-plan compile {{change_dir}} --parent {{self.bead_id}} --json"
-capture = "apply_compile"
+**v1 reality (discovered during section 7 implementation).** The beads 1.0.0 formula TOML schema does **not** expose `exec`, `command`, `run`, `capture`, or any equivalent field on steps — all of them silently cook to empty. A formula step is a pure declarative bead blueprint, not a workflow-runner directive. Steps are picked up by agents via `bd ready`, not auto-executed.
+
+**v1 implementation.** The `plan` step carries its compile instructions in the bead's `description`, not in an `exec` field. When an agent claims the step, they read the description and run:
+
+```sh
+beads-plan compile {{change_dir}} --parent <this-bead-id> --json
 ```
 
-`capture` stores the JSON summary (`{root_id, leaf_ids, test_task_ids, tiers}`) on the step bead as metadata, so the `apply` step can reference `{{steps.plan.capture.root_id}}` to find its work. The apply step then becomes a parent of (or depends-on) the root-epic that beads-plan created underneath it.
+They then record the returned `root_id` in the step bead's metadata:
 
-Rationale: zero duplication of the parse/enrich pipeline. Anything we already do in `internal/planner` stays there. The formula just says "at step 6, run the planner and graft its output under step 7." If beads-plan changes internally, the formula doesn't care — as long as the JSON contract holds.
+```sh
+bd update <this-bead-id> --metadata '{"apply_compile_root": "<root_id>"}'
+```
+
+The plan step is declared with `waits_for = "all-children"` (this field **is** supported by the schema), so it stays `in_progress` while agents work through the compiled apply-phase atoms. When every compiled child bead closes, the plan step is eligible to close and unblocks `verify`.
+
+Rationale: zero duplication of the parse/enrich pipeline is still achieved — nothing compiles apply-phase beads except `beads-plan compile`. What's lost is the automatic invocation; a human or agent has to initiate the compile step rather than the formula runtime doing it for them. Given that every other step in the lifecycle is agent-driven anyway, the inconsistency is minimal.
+
+**v2.** If the beads formula schema adds `exec` support, this descope reverts to the original design: move the command from the description to an `exec` field, and add a capture mechanism so the verify step can reference the compile result programmatically. Tracked in follow-up issue `beads-plan-c45`.
 
 ### D5. `beads-plan compile` gains two flags, nothing else
 
@@ -139,18 +152,30 @@ Rationale: OpenSpec changes are high-audit — operators will want to look back 
 
 ### D8. Variables the formula accepts
 
+**v1.**
+
+```
+change_dir   (required) path to openspec/changes/<name>/
+change       (optional) change identifier used in titles; default "<change>" placeholder
+```
+
+v1 accepts only these two variables. The richer variable surface the original design proposed — `skip_gates`, `add_gates`, `test_retry_cap` — is deferred to v2 because the beads formula schema has no `exec`-or-validation pathway that could actually honor them. Unknown variables passed via `--var` are silently accepted by the schema, which means an operator who passes `--var skip_gates=proposal` will get no error and no effect; the formula's file-header documentation calls this out explicitly.
+
+**Why `change` has no automatic derivation.** The natural default would be `basename(change_dir)`, but beads formula variables do not support computed defaults — only literal strings. The placeholder `<change>` makes it obvious when a real pour has forgotten to pass `--var change=…`.
+
+**v2.**
+
 ```
 change_dir       (required) path to openspec/changes/<name>/
-change           (derived from change_dir; basename)
+change           (optional) identifier, auto-derived from change_dir basename
 skip_gates       (optional) comma-separated list from {specs,tasks}
 add_gates        (optional) comma-separated list from {explore}
-test_retry_cap   (optional) integer, default 1; max retries after the initial run-tests failure.
-                 0 = no retry (escalate immediately); N = allow N correct→re-test cycles.
+test_retry_cap   (optional) integer, default 1; max retries after the initial run-tests failure
 ```
 
-Attempts to suppress a mandatory gate (`proposal`, `design`, `verify`, `archive`) via `skip_gates` fail with a formula validation error. Attempts to pass unknown gates fail with the same error.
+In v2, attempts to suppress a mandatory gate (`proposal`, `design`, `verify`, `archive`) via `skip_gates` will fail with a formula validation error, and unknown variables will be rejected. v2 is tracked by follow-up issue `beads-plan-c45`.
 
-Rationale: a single validated variable surface means operators can't accidentally disable the floor, and the template stays declarative.
+Rationale for the v1 surface: keep the contract narrow enough that the formula can actually deliver on every variable it declares. v1 ships with two honest variables rather than five aspirational ones.
 
 ## Risks / Trade-offs
 

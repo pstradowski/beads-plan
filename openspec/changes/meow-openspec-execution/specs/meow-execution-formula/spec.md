@@ -6,130 +6,106 @@ The system SHALL ship a beads formula at `.beads/formulas/meow-openspec.formula.
 
 #### Scenario: Formula is discoverable by bd
 - **WHEN** an operator runs `bd formula list` from the repository root
-- **THEN** `meow-openspec` appears in the output, with its source path resolving to `.beads/formulas/meow-openspec.formula.toml`
-
-#### Scenario: Pouring as vapor produces a warning
-- **WHEN** an operator runs `bd mol wisp meow-openspec --var change_dir=openspec/changes/example`
-- **THEN** `bd` emits a warning that the formula's declared phase is `liquid` and the wisp invocation is discouraged, but the command still executes
+- **THEN** `meow-openspec` appears in the output
 
 #### Scenario: Formula compiles cleanly via seed
 - **WHEN** an operator runs `bd mol seed meow-openspec --var change_dir=openspec/changes/example`
-- **THEN** `bd` reports the formula is accessible and can be cooked, with no schema validation errors
+- **THEN** `bd` reports the formula is accessible with no schema validation errors
+
+#### Scenario: Formula declares liquid phase
+- **WHEN** an operator inspects the formula file or runs `bd formula show meow-openspec`
+- **THEN** the `phase` field is `liquid`, signalling that it should be instantiated via `bd mol pour` (persistent) rather than `bd mol wisp` (ephemeral), because OpenSpec changes have long-term audit value
 
 ### Requirement: Lifecycle step structure
 
-The formula SHALL define exactly nine ordered lifecycle steps with the following identifiers and sequence: `explore`, `proposal`, `specs`, `design`, `tasks`, `plan`, `apply`, `verify`, `archive`. Each step SHALL produce a bead in the molecule when the formula is poured.
+The formula SHALL define fourteen ordered steps that together form the full OpenSpec lifecycle. The lifecycle comprises seven work phases — `explore`, `proposal`, `specs`, `design`, `tasks`, `plan`, `verify`, `archive` — and six human review gates interleaved after the artifact-producing phases. Each step SHALL produce a bead in the molecule when the formula is poured.
 
-#### Scenario: Poured molecule contains all nine steps
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=openspec/changes/example` and then `bd mol current <mol-id>`
-- **THEN** the output lists nine steps in the order `explore → proposal → specs → design → tasks → plan → apply → verify → archive`
+#### Scenario: Poured molecule lists every lifecycle step in order
+- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=openspec/changes/example --var change=example` and then `bd mol current <mol-id>`
+- **THEN** the output lists the fourteen steps in the order `explore → proposal → proposal-review → specs → specs-review → design → design-review → tasks → tasks-review → plan → verify → verify-review → archive → archive-review`
 
 #### Scenario: Steps are linearly ordered by dependencies
-- **WHEN** the molecule is poured and inspected via `bd mol show <mol-id>`
-- **THEN** each step depends on the previous step, so that `apply` cannot start until `plan` closes, `plan` cannot start until `tasks` closes, and so on back to `explore`
+- **WHEN** the molecule is inspected via `bd mol show <mol-id>`
+- **THEN** each step depends on the previous step via `depends_on`, so that no step can start until its predecessor closes
 
-### Requirement: Mandatory human gates
+#### Scenario: Plan step uses waits_for=all-children
+- **WHEN** the formula is cooked to JSON via `bd cook meow-openspec --mode runtime --var change_dir=… --var change=…`
+- **THEN** the `plan` step's `waits_for` field is set to `all-children`, meaning the step stays in_progress while an agent works through the compiled apply-phase atoms (the children grafted under it by `beads-plan compile --parent <plan-bead-id>`)
 
-The formula SHALL attach a `gate: { type: "human" }` field to the `proposal`, `design`, `verify`, and `archive` steps. These four gates SHALL NOT be suppressible via formula variables, and attempts to do so SHALL fail formula validation.
+### Requirement: Mandatory human review gates
 
-#### Scenario: Mandatory gates are created on pour
-- **WHEN** an operator pours the formula and runs `bd gate list`
-- **THEN** four open human gates appear, one each for phases `proposal`, `design`, `verify`, and `archive`
+The formula SHALL attach a `gate = { type = "human" }` field to exactly six review steps: `proposal-review`, `specs-review`, `design-review`, `tasks-review`, `verify-review`, and `archive-review`. All six are mandatory in v1 — the formula cannot be instantiated in a way that skips any of them.
 
-#### Scenario: Mandatory gate blocks its step
-- **WHEN** the `proposal` step has been completed but its `proposal-accepted` gate remains open
-- **THEN** the `specs` step stays in `blocked` status and `bd mol current` shows the molecule paused at the `proposal` gate
+#### Scenario: Six review gates are created on pour
+- **WHEN** an operator pours the formula and runs `bd gate list` filtered to the molecule
+- **THEN** exactly six open human gates appear, one per review step
 
-#### Scenario: Attempt to suppress mandatory gate fails
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=openspec/changes/example --var skip_gates=proposal`
-- **THEN** the command fails with a formula validation error stating that `proposal` is a mandatory gate and cannot be suppressed, and no molecule is created
+#### Scenario: Each mandatory gate blocks its own step
+- **WHEN** a review step's upstream work step has closed but the review gate remains open
+- **THEN** `bd mol current <mol-id>` shows the molecule paused at that review step, and the next work step (e.g. `specs` after `proposal-review`) stays blocked
 
-#### Scenario: Resolving a mandatory gate unblocks the next step
-- **WHEN** an operator runs `bd gate resolve <proposal-gate-id>` (or `bd human respond <id>`)
+#### Scenario: Resolving a gate unblocks downstream
+- **WHEN** a reviewer runs `bd gate resolve <gate-id>` (or `bd human respond <id>`) on an open review gate
 - **AND** then runs `bd mol ready --gated`
-- **THEN** the molecule appears in the ready-gated list and its `specs` step transitions from `blocked` to `ready`
+- **THEN** the molecule appears in the ready-gated list and the blocked downstream work step transitions to `ready`
 
-### Requirement: Optional gates on specs and tasks
+#### Scenario: Mandatory gates cannot be suppressed via variables
+- **WHEN** an operator attempts to pour with a speculative variable like `--var skip_gates=proposal`
+- **THEN** the variable is accepted by the schema (since v1 does not implement suppression) but the `proposal-review` gate is created anyway; the formula documentation in the file header explicitly states that v1 treats all six gates as mandatory
 
-The formula SHALL attach `gate: { type: "human" }` to the `specs` and `tasks` steps by default. These gates SHALL be suppressible per pour via `--var skip_gates=<comma-separated>` where values are drawn from the set `{specs, tasks}`.
+### Requirement: Plan step carries compile instructions
 
-#### Scenario: Optional gates are on by default
-- **WHEN** an operator pours the formula without passing `skip_gates`
-- **THEN** `bd gate list` shows open human gates for phases `specs` and `tasks` in addition to the four mandatory gates
+Because the beads 1.0.0 formula schema has no `exec` field on steps, the `plan` step (step 10) SHALL carry instructions in its `description` telling whichever agent claims it to run `beads-plan compile {{change_dir}} --parent <this-bead-id> --json` and record the returned `root_id` in the bead's metadata via `bd update`.
 
-#### Scenario: Optional gate can be suppressed
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=… --var skip_gates=specs,tasks`
-- **THEN** the poured molecule has no gates on the `specs` or `tasks` steps, and those steps proceed to the next step as soon as their own work closes
+#### Scenario: Plan step description names the compile command
+- **WHEN** a reviewer inspects the `plan` step via `bd show <plan-bead-id>`
+- **THEN** the description contains the literal command `beads-plan compile` and explains the `--parent` and `--json` flags
 
-#### Scenario: Unknown gate name fails validation
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=… --var skip_gates=madeup`
-- **THEN** the command fails with a formula validation error listing the recognised optional gate names, and no molecule is created
+#### Scenario: Compiled root is grafted under the plan bead
+- **WHEN** an agent runs `beads-plan compile <change-dir> --parent <plan-bead-id> --json`
+- **THEN** the resulting root epic has `plan-bead-id` as its parent, so `bd show <plan-bead-id>` lists the compiled apply-phase epic among its children
 
-### Requirement: Optional explore gate
-
-The formula SHALL leave the `explore` step un-gated by default, and SHALL accept a variable `add_gates` with value `explore` to attach a human gate to that step on demand.
-
-#### Scenario: Explore is un-gated by default
-- **WHEN** an operator pours the formula without passing `add_gates`
-- **THEN** `bd gate list` shows no gate on the `explore` step
-
-#### Scenario: Explore gate can be added on demand
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=… --var add_gates=explore`
-- **THEN** `bd gate list` shows an open `explore-accepted` human gate blocking the `proposal` step
-
-### Requirement: Gate bead metadata
-
-Every gate bead created by the formula SHALL carry metadata in the shape `{"change": "<name>", "phase": "<phase-id>", "artifact": "<path-to-artifact>"}` where `<phase-id>` is one of `proposal`, `specs`, `design`, `tasks`, `verify`, `archive`, or `explore`.
-
-#### Scenario: Gate bead is discoverable by phase
-- **WHEN** an operator runs `bd human list --json` while the molecule is paused at the `design` gate
-- **THEN** the returned gate bead has metadata field `phase` equal to `design` and `artifact` equal to `openspec/changes/<name>/design.md`
-
-#### Scenario: Gate bead identifies its change
-- **WHEN** the reviewer runs `bd show <gate-id> --json`
-- **THEN** the bead's metadata `change` field equals the basename of the `change_dir` passed at pour time
-
-### Requirement: Plan step invokes beads-plan compile
-
-The `plan` step (step 6) SHALL have an `exec` field that invokes `beads-plan compile {{change_dir}} --parent {{self.bead_id}} --json` and SHALL capture the resulting JSON under the name `apply_compile` so that subsequent steps can reference `{{steps.plan.capture.root_id}}`.
-
-#### Scenario: Plan step runs the compiler
-- **WHEN** the molecule reaches step 6 and the `plan` step becomes ready
-- **THEN** the exec command resolves to `beads-plan compile openspec/changes/<name> --parent <plan-bead-id> --json` and runs to successful exit
-
-#### Scenario: Apply step can reference the compiled root
-- **WHEN** the `plan` step closes with a captured JSON summary containing a non-empty `root_id`
-- **AND** the `apply` step becomes ready
-- **THEN** the apply step's bead is either a parent of, or has a depends-on edge to, the bead ID recorded in `apply_compile.root_id`
-
-#### Scenario: Plan step failure does not advance the molecule
-- **WHEN** `beads-plan compile` exits with a non-zero status during the `plan` step
-- **THEN** the `plan` step stays in `in_progress` (or transitions to `failed` per beads' conventions), and the `apply` step stays blocked
+#### Scenario: Plan bead closes when all compiled children close
+- **WHEN** all compiled apply-phase leaf beads (and test-task epics) have closed
+- **AND** the `plan` step bead has `waits_for = all-children`
+- **THEN** the `plan` step is eligible for close, and closing it unblocks the `verify` step
 
 ### Requirement: Formula variable surface
 
-The formula SHALL accept the following variables, and SHALL reject pour invocations that violate their constraints:
+The formula SHALL accept two variables and SHALL reject pour invocations that omit the required one:
 
-| Variable          | Required | Type    | Constraint                                                                  |
-| ----------------- | -------- | ------- | --------------------------------------------------------------------------- |
-| `change_dir`      | yes      | string  | Must be an existing directory containing at least `proposal.md`             |
-| `change`          | no       | string  | Derived from `basename(change_dir)` if not set                              |
-| `skip_gates`      | no       | string  | Comma-separated subset of `{specs, tasks}`                                  |
-| `add_gates`       | no       | string  | Comma-separated subset of `{explore}`                                       |
-| `test_retry_cap`  | no       | int     | Non-negative integer, default `1` (see meow-test-correction-loop spec)      |
+| Variable     | Required | Default    | Description                                                                 |
+| ------------ | -------- | ---------- | --------------------------------------------------------------------------- |
+| `change_dir` | yes      | (none)     | Path to the OpenSpec change directory, e.g. `openspec/changes/my-change`    |
+| `change`     | no       | `<change>` | Change identifier used in bead titles and descriptions                      |
+
+Additional variables (`skip_gates`, `add_gates`, `test_retry_cap`) are **not** implemented in v1. They may be added in a follow-up once the beads formula schema supports conditional steps and step-level validation.
 
 #### Scenario: Missing required variable fails
-- **WHEN** an operator runs `bd mol pour meow-openspec` with no `--var change_dir=…`
+- **WHEN** an operator runs `bd mol pour meow-openspec` without `--var change_dir=…`
 - **THEN** the command fails with a validation error naming `change_dir` as a required variable, and no molecule is created
 
-#### Scenario: Non-existent change_dir fails
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=openspec/changes/does-not-exist`
-- **THEN** the command fails with a validation error stating the directory does not exist or does not contain a `proposal.md`
+#### Scenario: Default change identifier is a placeholder
+- **WHEN** an operator pours with `--var change_dir=openspec/changes/example` and no explicit `--var change=…`
+- **THEN** the cooked step titles contain the literal string `<change>` in place of a real identifier — operators are expected to pass `--var change=example` for every real pour
 
-#### Scenario: Unknown variable is rejected
-- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=… --var foo=bar`
-- **THEN** the command fails with a validation error listing `foo` as an unknown variable
+#### Scenario: Unknown variables are accepted without error
+- **WHEN** an operator runs `bd mol pour meow-openspec --var change_dir=… --var skip_gates=specs`
+- **THEN** the command succeeds but `skip_gates` has no effect — the `specs-review` gate is still created; the formula's file header documents this as a v1 limitation
 
-#### Scenario: Default-derived change variable
-- **WHEN** an operator pours the formula with `change_dir=openspec/changes/example` and no explicit `change`
-- **THEN** gate metadata and step descriptions in the poured molecule use `example` as the change identifier
+### Requirement: Review context lives in step descriptions
+
+Because the beads 1.0.0 formula schema has no structured metadata field on steps, every review-gate step SHALL carry in its `description` the information a human needs to resolve the gate:
+
+- which artifact to read (e.g. `openspec/changes/<name>/proposal.md`),
+- what to check for in that artifact,
+- the `bd gate resolve` command to run on accept,
+- what to do if the review finds problems.
+
+#### Scenario: Review step description names the artifact
+- **WHEN** a reviewer runs `bd show <proposal-review-bead-id>`
+- **THEN** the description contains `{{change_dir}}/proposal.md` (substituted to the real path after pour) and explicit instructions for resolving the gate
+
+#### Scenario: Review step description names the resolve command
+- **WHEN** a reviewer reads the description of any review step
+- **THEN** the description contains the literal command `bd gate resolve` so that non-expert reviewers know how to unblock the workflow
