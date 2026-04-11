@@ -94,8 +94,12 @@ make install
 
 ### Prerequisites
 
-- [bd](https://github.com/steveyegge/beads) — required for `compile` and `view` commands
+- [bd](https://github.com/steveyegge/beads) **>= 1.0.0** — required for `compile` and `view` commands, and for pouring the `meow-openspec` formula. The formula uses `bd formula`, `bd cook`, `bd mol pour`, `bd gate`, and `bd mol ready --gated`; all of these land in 1.0.0. Verify with `bd version` and `make test-formula`.
 - [openspec](https://github.com/steveyegge/openspec) — optional, for `compile` command only
+
+### Migration note: `plan` → `compile`
+
+The `beads-plan plan` subcommand has been renamed to `beads-plan compile`. The flag set and behavior are unchanged; if you had muscle memory or scripts calling `beads-plan plan <change-dir>`, replace the verb with `compile`. The rename reflects the command's leaf-tool role — it compiles a change directory into apply-phase beads, it does not orchestrate the OpenSpec lifecycle. For the gated lifecycle, see [the meow-openspec formula section above](#the-meow-openspec-formula) and the runbook at `docs/meow-openspec-runbook.md`.
 
 ## Quick start
 

@@ -15,6 +15,32 @@ Use this skill when:
 - Working on tasks tracked in beads with tier/parallelism metadata
 - Dispatching subtasks to appropriate model tiers
 - Generating or refreshing tasks.md from beads
+- Pouring or working through a meow-openspec molecule (the full
+  gated OpenSpec lifecycle)
+
+## The meow-openspec formula
+
+For the full OpenSpec lifecycle with human-in-the-loop review gates,
+pour the ` + "`meow-openspec`" + ` beads formula instead of invoking
+` + "`beads-plan compile`" + ` directly:
+
+` + "```sh" + `
+bd mol pour meow-openspec \
+    --var change_dir=openspec/changes/my-change \
+    --var change=my-change
+` + "```" + `
+
+The formula creates a fourteen-step gated workflow: seven work phases
+interleaved with six mandatory human review gates. Agents pick up
+ready steps via ` + "`bd ready`" + `; human reviewers resolve gates
+with ` + "`bd gate resolve`" + ` or ` + "`bd human respond`" + `.
+
+The formula's ` + "`plan`" + ` step (step 10) invokes this tool: when
+an agent claims the step, they run
+` + "`beads-plan compile <change-dir> --parent <this-bead-id> --json`" + `
+and record the returned root_id in the step's metadata.
+
+Full runbook: ` + "`docs/meow-openspec-runbook.md`" + `.
 
 ## Commands
 

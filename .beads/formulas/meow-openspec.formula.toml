@@ -29,6 +29,13 @@ by design.
 
 Instantiate with:
   bd mol pour meow-openspec --var change_dir=openspec/changes/my-change --var change=my-change
+
+Prerequisites:
+  Requires bd >= 1.0.0 with formula, cook, mol pour, gate, and
+  mol ready --gated subcommands. Verify with `bd version` and
+  `make test-formula`. Formulas are declared experimental in bd
+  1.0.0; the schema may change in later versions and this file
+  may need adjustment. Tracked upstream via beads-plan-c45.
 """
 phase = "liquid"
 
