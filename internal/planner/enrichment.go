@@ -75,18 +75,21 @@ func DetectTest(task parser.Task, section parser.Section) string {
 	if hasStandaloneTestWord(section.Title) {
 		return "section"
 	}
-	// Strip any HTML comments before the keyword scan so that tasks
-	// that document the marker syntax (e.g. "match `<!-- test -->`")
-	// don't have the "test" inside the comment mis-read as a
-	// standalone occurrence in the task body itself.
-	titleWithoutComments := htmlCommentRe.ReplaceAllString(task.Title, " ")
-	if hasStandaloneTestWord(titleWithoutComments) && !nonTestSectionRe.MatchString(section.Title) {
+	// Strip HTML comments and backtick code spans before the keyword
+	// scan so that "test" inside comments, JSON payloads, or CLI
+	// examples doesn't trigger false-positive classification. GH#2.
+	titleCleaned := htmlCommentRe.ReplaceAllString(task.Title, " ")
+	titleCleaned = backtickCodeRe.ReplaceAllString(titleCleaned, " ")
+	if hasStandaloneTestWord(titleCleaned) && !nonTestSectionRe.MatchString(section.Title) {
 		return "keyword"
 	}
 	return ""
 }
 
-var htmlCommentRe = regexp.MustCompile(`<!--.*?-->`)
+var (
+	htmlCommentRe  = regexp.MustCompile(`<!--.*?-->`)
+	backtickCodeRe = regexp.MustCompile("`[^`]+`")
+)
 
 // StripTestMarker removes any <!-- test --> marker from a task title and
 // returns the cleaned version, suitable for use in bead titles.
