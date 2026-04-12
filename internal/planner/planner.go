@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/pstradowski/beads-plan/internal/parser"
@@ -119,8 +120,9 @@ func (p *Planner) CreateSubEpics(rootID string, sections []parser.Section, enric
 // createTaskAtoms creates the bead structure for a single task and returns
 // the "primary closer" bead ID — the ID that downstream deps should wait
 // for. For regular tasks this is the leaf bead. For test tasks this is
-// the test-task epic, which closes only when its latest run-tests-N bead
-// passes (per the meow-test-correction-loop spec).
+// the run-tests-1 bead (type=task), which satisfies bd's constraint that
+// deps must be between tasks. Semantically, downstream tasks wait for the
+// test run to pass. (GH#3)
 func (p *Planner) createTaskAtoms(parent string, task parser.Task, e EnrichedTask) (string, error) {
 	if e.IsTest {
 		return p.createTestTaskSubEpic(parent, task, e)
@@ -161,9 +163,14 @@ func (p *Planner) createRegularLeaf(parent string, task parser.Task, e EnrichedT
 // The run-tests-N → correct-N retry loop itself is driven by the
 // meow-openspec formula at runtime, not here at compile time.
 //
-// Returns the test-task epic ID, which is the primary closer for
-// dependency wiring. The execute bead ID is appended to p.LeafIDs so it
-// shows up in CompileSummary.LeafIDs (run-tests-1 and correct-1 do not).
+// Returns the run-tests-1 bead ID as the "primary closer" for dependency
+// wiring — this is a type=task bead that satisfies bd's constraint that
+// deps must be between tasks (not task→epic). Downstream tasks that
+// depend on this test task will wait for run-tests-1 to close, which
+// semantically means "the tests passed." (GH#3)
+//
+// The execute bead ID is appended to p.LeafIDs so it shows up in
+// CompileSummary.LeafIDs (run-tests-1 and correct-1 do not).
 func (p *Planner) createTestTaskSubEpic(parent string, task parser.Task, e EnrichedTask) (string, error) {
 	cleanTitle := StripTestMarker(task.Title)
 
@@ -226,7 +233,7 @@ func (p *Planner) createTestTaskSubEpic(parent string, task parser.Task, e Enric
 		return "", fmt.Errorf("create test-task correct-1 %s: %w", task.Number, err)
 	}
 
-	return epicID, nil
+	return runID, nil
 }
 
 // EnrichedTask extends a parsed task with additional context for bead creation.
@@ -246,8 +253,8 @@ type EnrichedTask struct {
 // their section's sub-epic. For collapsed single-task sections, the task
 // structure was already created by CreateSubEpics under rootID, so this
 // method reuses that ID without re-creating. Returns map of task number
-// → primary-closer bead ID (regular leaf for non-test tasks, test-task
-// epic for test tasks) — that ID is what CreateDependencies wires as the
+// → primary-closer bead ID (regular leaf for non-test tasks, run-tests-1
+// for test tasks) — that ID is what CreateDependencies wires as the
 // dep source/target for a given task number.
 func (p *Planner) CreateLeafTasks(subEpicIDs map[int]string, sections []parser.Section, enriched map[string]EnrichedTask) (map[string]string, error) {
 	ids := make(map[string]string)
@@ -280,9 +287,13 @@ type DepEdge struct {
 	To   string // ...this task number
 }
 
-// CreateDependencies creates bd dep add edges between beads.
+// CreateDependencies creates bd dep add edges between beads. Individual
+// edge failures are collected and reported as a combined error after all
+// edges have been attempted, so that a single bad edge (e.g., a type
+// constraint violation) does not discard all remaining valid edges. (GH#4)
 func (p *Planner) CreateDependencies(taskIDs map[string]string, edges []DepEdge) (int, error) {
 	created := 0
+	var errs []error
 	for _, e := range edges {
 		fromID, ok := taskIDs[e.From]
 		if !ok {
@@ -293,9 +304,13 @@ func (p *Planner) CreateDependencies(taskIDs map[string]string, edges []DepEdge)
 			continue
 		}
 		if err := p.Client.AddDep(fromID, toID); err != nil {
-			return created, fmt.Errorf("add dep %s→%s: %w", e.From, e.To, err)
+			errs = append(errs, fmt.Errorf("add dep %s→%s: %w", e.From, e.To, err))
+			continue
 		}
 		created++
+	}
+	if len(errs) > 0 {
+		return created, fmt.Errorf("created %d deps, %d failed: %w", created, len(errs), errors.Join(errs...))
 	}
 	return created, nil
 }

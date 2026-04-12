@@ -103,6 +103,29 @@ func TestDetectTestIgnoresTestInsideHTMLComment(t *testing.T) {
 	}
 }
 
+func TestDetectTestIgnoresTestInsideBacktickCodeSpan(t *testing.T) {
+	// GH#2: a task title with "test" inside a backtick code span
+	// (JSON payload, CLI example, etc.) should not trigger the
+	// keyword rule.
+	cases := []struct {
+		name  string
+		title string
+	}{
+		{"json payload", "Send `curl -d '{\"title\":\"router test\"}' ...` and confirm delivery"},
+		{"cli flag", "Run `make test` and capture output"},
+		{"variable name", "Set `test_mode=true` in config"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			section := parser.Section{Title: "Implementation"}
+			task := parser.Task{Title: tc.title}
+			if got := DetectTest(task, section); got != "" {
+				t.Errorf("title %q: test inside backtick should not trigger detection, got %q", tc.title, got)
+			}
+		})
+	}
+}
+
 func TestDetectTestRejectsColonCompounds(t *testing.T) {
 	// Compound identifiers like meow:test, config:test, dev:test
 	// should not match the keyword rule.

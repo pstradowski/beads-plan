@@ -285,9 +285,12 @@ func TestCreateTestTaskSubEpicShape(t *testing.T) {
 		t.Fatalf("expected 2 run-tests→execute deps, got %d: %v", len(mc.deps), mc.deps)
 	}
 	// Primary-closer mapping: taskIDs["8.1"] must be the test-task epic, not execute
-	wantEpicID := "BEAD-2" // 1=section sub-epic, 2=test-task[8.1] epic
-	if taskIDs["8.1"] != wantEpicID {
-		t.Errorf("taskIDs[8.1]: expected test-task epic %s, got %s", wantEpicID, taskIDs["8.1"])
+	// GH#3: primary closer is now run-tests-1 (type=task), not the epic
+	// (type=epic). bd dep add requires task→task, not task→epic.
+	// Creates: 1=sub-epic, 2=test-task[8.1] epic, 3=execute, 4=run-tests-1
+	wantRunTestsID := "BEAD-4"
+	if taskIDs["8.1"] != wantRunTestsID {
+		t.Errorf("taskIDs[8.1]: expected run-tests-1 %s (GH#3), got %s", wantRunTestsID, taskIDs["8.1"])
 	}
 
 	// Accumulators: both test-task epic IDs recorded; both execute beads recorded as leaves
@@ -333,9 +336,10 @@ func TestCollapsedTestTaskSectionGoesUnderRoot(t *testing.T) {
 	if !containsLabel(mc.creates[0].Labels, "meow:test") {
 		t.Errorf("collapsed test-task should carry meow:test label, got %v", mc.creates[0].Labels)
 	}
-	// The sub-epic map points to the test-task epic (primary closer)
-	if subEpicIDs[0] != "BEAD-1" {
-		t.Errorf("collapsed sub-epic map should point at the test-task epic, got %q", subEpicIDs[0])
+	// GH#3: sub-epic map points to run-tests-1 (primary closer), not the epic.
+	// Creates: 1=test-task epic, 2=execute, 3=run-tests-1, 4=correct-1
+	if subEpicIDs[0] != "BEAD-3" {
+		t.Errorf("collapsed sub-epic map should point at run-tests-1 (GH#3), got %q", subEpicIDs[0])
 	}
 }
 
@@ -346,6 +350,49 @@ func containsLabel(labels []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// failingDepClient fails AddDep when the target matches a blocklist.
+type failingDepClient struct {
+	mockClient
+	failTargets map[string]bool
+}
+
+func (f *failingDepClient) AddDep(issueID, dependsOnID string) error {
+	if f.failTargets[dependsOnID] {
+		return fmt.Errorf("rejected dep to %s", dependsOnID)
+	}
+	return f.mockClient.AddDep(issueID, dependsOnID)
+}
+
+func TestCreateDependenciesCollectsErrors(t *testing.T) {
+	// GH#4: a single bad edge should not kill all remaining edges.
+	fc := &failingDepClient{failTargets: map[string]bool{"BAD": true}}
+	p := &Planner{Client: fc, ChangeName: "test"}
+
+	taskIDs := map[string]string{
+		"1.1": "BEAD-A",
+		"1.2": "BEAD-B",
+		"2.1": "BAD",
+		"3.1": "BEAD-C",
+	}
+	edges := []DepEdge{
+		{From: "1.2", To: "1.1"}, // ok
+		{From: "3.1", To: "2.1"}, // fail (target is BAD)
+		{From: "3.1", To: "1.2"}, // ok — should still be created
+	}
+
+	created, err := p.CreateDependencies(taskIDs, edges)
+
+	if created != 2 {
+		t.Errorf("expected 2 successful deps, got %d", created)
+	}
+	if err == nil {
+		t.Fatal("expected an error summarising the failed edge")
+	}
+	if len(fc.deps) != 2 {
+		t.Errorf("expected 2 dep calls to succeed, got %d: %v", len(fc.deps), fc.deps)
+	}
 }
 
 func TestCreateRootEpicDefaultPriority(t *testing.T) {
