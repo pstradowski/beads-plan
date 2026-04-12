@@ -14,7 +14,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output structured JSON instead of human-readable text")
-	rootCmd.AddCommand(planCmd)
+	rootCmd.AddCommand(compileCmd)
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(primeCmd)
 }

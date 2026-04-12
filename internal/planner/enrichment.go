@@ -2,10 +2,97 @@ package planner
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/pstradowski/beads-plan/internal/parser"
 )
+
+// Test-detection regexes. Evaluated in priority order by DetectTest:
+//  1. explicitTestMarkerRe — inline HTML comment, always wins.
+//  2. hasStandaloneTestWord(section.Title) — section title mentions
+//     test/tests/testing as a standalone word (not part of a compound
+//     like "test-task" or "smoke-test").
+//  3. hasStandaloneTestWord(task.Title) — same, for task title, but
+//     only if the enclosing section is not clearly non-test
+//     (nonTestSectionRe).
+var (
+	// trailingTestMarkerRe matches `<!-- test -->` only as a trailing
+	// annotation on a task title — the marker must be the last
+	// non-whitespace content. This prevents task descriptions that
+	// document the marker syntax (e.g. section 5.2) from being
+	// mis-classified as test tasks themselves.
+	trailingTestMarkerRe = regexp.MustCompile(`(?i)<!--\s*test\s*-->\s*$`)
+	testWordRe           = regexp.MustCompile(`(?i)test(s|ing)?`)
+	nonTestSectionRe     = regexp.MustCompile(`(?i)\b(refactor|document|docs|rename)\b`)
+	// Alias kept for StripTestMarker — it strips any instance, not
+	// just the trailing one, because historical task files may have
+	// inline markers we still want to clean from displayed titles.
+	explicitTestMarkerRe = regexp.MustCompile(`(?i)<!--\s*test\s*-->`)
+)
+
+// hasStandaloneTestWord reports whether s contains the literal word
+// "test", "tests", or "testing" as a standalone token — not as part of
+// a hyphenated compound (test-task, smoke-test, run-tests-N,
+// stuck-test) nor as a substring of a longer word (tested, testimony).
+// Standalone means: the match is not preceded or followed by '-' or by
+// another word character [A-Za-z0-9_].
+func hasStandaloneTestWord(s string) bool {
+	for _, m := range testWordRe.FindAllStringIndex(s, -1) {
+		start, end := m[0], m[1]
+		if start > 0 && isBoundaryReject(s[start-1]) {
+			continue
+		}
+		if end < len(s) && isBoundaryReject(s[end]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isBoundaryReject(c byte) bool {
+	// Reject characters that indicate "test" is part of a longer
+	// compound token: hyphens (test-task, smoke-test), colons
+	// (meow:test, config:test), and word characters (tested,
+	// testimony, tests-next-to-word).
+	if c == '-' || c == ':' {
+		return true
+	}
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// DetectTest classifies a task as a test task (per
+// openspec/changes/meow-openspec-execution/specs/meow-test-correction-loop/
+// spec.md §"Test task detection is layered"). Returns the rule that
+// fired — "explicit", "section", or "keyword" — or "" when the task is
+// not a test task. The rule name is recorded in bead metadata for
+// debugging when the test-task sub-epic is compiled.
+func DetectTest(task parser.Task, section parser.Section) string {
+	if trailingTestMarkerRe.MatchString(task.Title) {
+		return "explicit"
+	}
+	if hasStandaloneTestWord(section.Title) {
+		return "section"
+	}
+	// Strip any HTML comments before the keyword scan so that tasks
+	// that document the marker syntax (e.g. "match `<!-- test -->`")
+	// don't have the "test" inside the comment mis-read as a
+	// standalone occurrence in the task body itself.
+	titleWithoutComments := htmlCommentRe.ReplaceAllString(task.Title, " ")
+	if hasStandaloneTestWord(titleWithoutComments) && !nonTestSectionRe.MatchString(section.Title) {
+		return "keyword"
+	}
+	return ""
+}
+
+var htmlCommentRe = regexp.MustCompile(`<!--.*?-->`)
+
+// StripTestMarker removes any <!-- test --> marker from a task title and
+// returns the cleaned version, suitable for use in bead titles.
+func StripTestMarker(title string) string {
+	return strings.TrimSpace(explicitTestMarkerRe.ReplaceAllString(title, ""))
+}
 
 const defaultMaxWords = 500
 
@@ -41,6 +128,10 @@ func EnrichTasks(sections []parser.Section, artifacts *parser.Artifacts, profile
 			// Tier assessment
 			assignment := AssignTier(task.Title, e.SpecID, e.Design, nil)
 			e.Tier = string(assignment.Tier)
+
+			// Test-task classification
+			e.TestRule = DetectTest(task, s)
+			e.IsTest = e.TestRule != ""
 
 			enriched[task.Number] = e
 		}

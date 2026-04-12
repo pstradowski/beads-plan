@@ -1,0 +1,360 @@
+formula = "meow-openspec"
+description = """
+Full OpenSpec lifecycle as a gated bead molecule.
+
+Pours a fourteen-step workflow that walks an OpenSpec change from
+exploration through archive: seven work phases interleaved with six
+mandatory human-in-the-loop review gates. Agents pick up ready beads
+via `bd ready`, do the work described in each bead, and close it;
+review gates block progression until a reviewer resolves them with
+`bd gate resolve <id>` or `bd human respond <id>`.
+
+Variables:
+  change_dir  (required) path to the change directory, e.g.
+              `openspec/changes/my-change`.
+  change      (optional) the change identifier used in titles and
+              descriptions. Defaults to `<change>` as a placeholder
+              when not supplied explicitly.
+
+Phase ordering:
+  explore -> proposal -> proposal-review -> specs -> specs-review ->
+  design -> design-review -> tasks -> tasks-review -> plan -> verify ->
+  verify-review -> archive -> archive-review
+
+In v1 all six review gates are hardcoded and cannot be suppressed; a
+future version may add `skip_gates` and `add_gates` variables to toggle
+the optional gates (specs, tasks) and the optional explore gate. The
+mandatory gates (proposal, design, verify, archive) will always exist
+by design.
+
+Instantiate with:
+  bd mol pour meow-openspec --var change_dir=openspec/changes/my-change --var change=my-change
+
+Prerequisites:
+  Requires bd >= 1.0.0 with formula, cook, mol pour, gate, and
+  mol ready --gated subcommands. Verify with `bd version` and
+  `make test-formula`. Formulas are declared experimental in bd
+  1.0.0; the schema may change in later versions and this file
+  may need adjustment. Tracked upstream via beads-plan-c45.
+"""
+phase = "liquid"
+
+[vars]
+change_dir = { required = true, description = "Path to the OpenSpec change directory, e.g. openspec/changes/my-change" }
+change = { default = "<change>", description = "Change identifier used in bead titles and descriptions. Passed explicitly; no automatic derivation in v1." }
+
+#
+# 1. Explore — optional context-gathering phase with no gate.
+#
+[[steps]]
+id = "explore"
+title = "Explore the problem space for {{change}}"
+type = "task"
+labels = ["meow:phase", "meow:explore"]
+description = """
+Investigate the problem before committing to a change.
+
+Read related code, identify constraints, talk through risks. Capture
+rough notes at {{change_dir}}/notes.md or inline in a scratch doc if
+useful. No artifact is required from this step.
+
+Close this bead when you have enough context to draft a proposal.
+Agents who already have sufficient context may claim and close this
+bead immediately.
+"""
+
+#
+# 2. Proposal — write proposal.md.
+#
+[[steps]]
+id = "proposal"
+title = "Draft proposal.md for {{change}}"
+type = "task"
+depends_on = ["explore"]
+labels = ["meow:phase", "meow:proposal"]
+description = """
+Write {{change_dir}}/proposal.md.
+
+Required sections: Why, What Changes, Capabilities (New/Modified),
+Impact. Use `openspec instructions proposal --change {{change}}` for
+the template and section descriptions.
+
+Close this bead when proposal.md is committed and ready for human
+review.
+"""
+
+#
+# 3. Proposal review (MANDATORY GATE) — blocks the specs step until a
+#    human resolves it.
+#
+[[steps]]
+id = "proposal-review"
+title = "Human review: accept proposal for {{change}}"
+type = "task"
+depends_on = ["proposal"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory", "meow:review:proposal"]
+description = """
+Mandatory human review gate for proposal.md. This gate cannot be
+suppressed.
+
+To resolve:
+  1. Read {{change_dir}}/proposal.md.
+  2. If the proposal is acceptable, run `bd gate resolve <gate-id>`
+     (or `bd human respond <id>` with a short ack note).
+  3. If changes are required, comment on the linked proposal bead
+     (not this gate) and re-open it by setting status=open; the
+     proposal step will be re-worked before this gate is resolved.
+"""
+
+#
+# 4. Specs — write one spec.md per new/modified capability.
+#
+[[steps]]
+id = "specs"
+title = "Draft specs/<capability>/spec.md for {{change}}"
+type = "task"
+depends_on = ["proposal-review"]
+labels = ["meow:phase", "meow:specs"]
+description = """
+Write one spec file per capability listed in proposal.md:
+  {{change_dir}}/specs/<capability>/spec.md
+
+Use `openspec instructions specs --change {{change}}` for the
+template. Requirements use `### Requirement:` with SHALL/MUST
+language. Every requirement needs at least one `#### Scenario:` with
+WHEN/THEN steps. Validate with `openspec validate {{change}}`.
+
+Close this bead when all spec files are committed.
+"""
+
+#
+# 5. Specs review (hardcoded gate in v1; becomes optional in v2).
+#
+[[steps]]
+id = "specs-review"
+title = "Human review: accept specs for {{change}}"
+type = "task"
+depends_on = ["specs"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:review:specs"]
+description = """
+Human review gate for spec files. In v1 this gate is always
+created; v2 will make it suppressible via --var skip_gates=specs.
+
+To resolve:
+  1. Read every {{change_dir}}/specs/<cap>/spec.md file.
+  2. Confirm requirements use SHALL/MUST and every requirement has
+     at least one WHEN/THEN scenario.
+  3. Run `bd gate resolve <gate-id>` to accept.
+"""
+
+#
+# 6. Design — write design.md with architecture decisions.
+#
+[[steps]]
+id = "design"
+title = "Draft design.md for {{change}}"
+type = "task"
+depends_on = ["specs-review"]
+labels = ["meow:phase", "meow:design"]
+description = """
+Write {{change_dir}}/design.md.
+
+Required sections: Context, Goals / Non-Goals, Decisions, Risks /
+Trade-offs. Use `openspec instructions design --change {{change}}`
+for the template.
+
+Close this bead when design.md is committed and ready for human
+review.
+"""
+
+#
+# 7. Design review (MANDATORY GATE).
+#
+[[steps]]
+id = "design-review"
+title = "Human review: accept design for {{change}}"
+type = "task"
+depends_on = ["design"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory", "meow:review:design"]
+description = """
+Mandatory human review gate for design.md. This gate cannot be
+suppressed.
+
+To resolve:
+  1. Read {{change_dir}}/design.md.
+  2. Verify the decisions are grounded in the proposal and specs,
+     and the risks/trade-offs are clear.
+  3. Run `bd gate resolve <gate-id>` to accept.
+"""
+
+#
+# 8. Tasks — write tasks.md implementation checklist.
+#
+[[steps]]
+id = "tasks"
+title = "Draft tasks.md for {{change}}"
+type = "task"
+depends_on = ["design-review"]
+labels = ["meow:phase", "meow:tasks"]
+description = """
+Write {{change_dir}}/tasks.md.
+
+Tasks must be `- [ ] X.Y description` checkboxes under `## N. Group`
+section headers. Use `openspec instructions tasks --change {{change}}`
+for the template. Mark any test tasks with a trailing `<!-- test -->`
+annotation so the compile step wraps them in a four-bead
+test-correction sub-epic.
+
+Close this bead when tasks.md is committed.
+"""
+
+#
+# 9. Tasks review (hardcoded gate in v1; becomes optional in v2).
+#
+[[steps]]
+id = "tasks-review"
+title = "Human review: accept tasks.md for {{change}}"
+type = "task"
+depends_on = ["tasks"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:review:tasks"]
+description = """
+Human review gate for tasks.md. In v1 this gate is always created;
+v2 will make it suppressible via --var skip_gates=tasks.
+
+To resolve:
+  1. Read {{change_dir}}/tasks.md.
+  2. Confirm every task is small enough for one session, tasks are
+     ordered by dependency, and test tasks carry `<!-- test -->`
+     annotations where appropriate.
+  3. Run `bd gate resolve <gate-id>` to accept.
+"""
+
+#
+# 10. Plan — compile apply-phase atoms via beads-plan.
+#
+[[steps]]
+id = "plan"
+title = "Compile apply-phase beads for {{change}}"
+type = "task"
+depends_on = ["tasks-review"]
+labels = ["meow:phase", "meow:plan"]
+waits_for = "all-children"
+description = """
+Compile {{change_dir}}/tasks.md into an apply-phase epic, grafted
+under this bead.
+
+When claiming this step, run:
+
+  beads-plan compile {{change_dir}} --parent <this-bead-id> --json
+
+The command creates a root epic as a child of this bead and populates
+it with enriched leaf tasks (test tasks become four-bead sub-epics
+per the meow-test-correction-loop spec). It emits a single-line JSON
+summary on stdout:
+
+  {"root_id": "...", "leaf_ids": [...], "test_task_ids": [...], "tiers": {...}}
+
+Record the root_id in this bead's metadata so later steps can reference
+the compile output:
+
+  bd update <this-bead-id> --metadata '{"apply_compile_root": "<root_id>"}'
+
+This step is configured with `waits_for = "all-children"` so it does
+not auto-close; it stays in_progress while agents work through the
+compiled apply-phase atoms via `bd ready`. Close it manually when the
+apply phase is complete (all leaf tasks closed, all test-task epics
+closed on passing runs).
+"""
+
+#
+# 11. Verify — run openspec verify and address issues.
+#
+[[steps]]
+id = "verify"
+title = "Verify implementation for {{change}}"
+type = "task"
+depends_on = ["plan"]
+labels = ["meow:phase", "meow:verify"]
+description = """
+Run openspec's verification pass:
+
+  openspec verify {{change}}
+
+Address any CRITICAL or WARNING issues. Confirm that every task in
+{{change_dir}}/tasks.md is checked off and that every requirement
+in the specs is implemented.
+
+Close this bead when the verify report is clean (or clean enough to
+bring to a human reviewer).
+"""
+
+#
+# 12. Verify review (MANDATORY GATE).
+#
+[[steps]]
+id = "verify-review"
+title = "Human review: accept verify report for {{change}}"
+type = "task"
+depends_on = ["verify"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory", "meow:review:verify"]
+description = """
+Mandatory human review gate before archiving. This gate cannot be
+suppressed.
+
+To resolve:
+  1. Review the verify report output from step 11.
+  2. Spot-check a handful of the compiled apply-phase beads for
+     completeness and correctness.
+  3. Run `bd gate resolve <gate-id>` to accept.
+"""
+
+#
+# 13. Archive — openspec archive the change.
+#
+[[steps]]
+id = "archive"
+title = "Archive {{change}}"
+type = "task"
+depends_on = ["verify-review"]
+labels = ["meow:phase", "meow:archive"]
+description = """
+Finalize and archive the change:
+
+  openspec archive {{change}}
+
+This moves {{change_dir}} to
+openspec/changes/archive/YYYY-MM-DD-{{change}}/ and offers to sync
+delta specs into openspec/specs/. Accept the sync unless there's a
+specific reason not to.
+
+Close this bead when the archive operation completes.
+"""
+
+#
+# 14. Archive review (MANDATORY GATE — final checkpoint).
+#
+[[steps]]
+id = "archive-review"
+title = "Human review: final archive checkpoint for {{change}}"
+type = "task"
+depends_on = ["archive"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory", "meow:review:archive"]
+description = """
+Final mandatory gate. This gate cannot be suppressed.
+
+To resolve:
+  1. Confirm the change directory was moved to
+     openspec/changes/archive/YYYY-MM-DD-{{change}}/.
+  2. Confirm delta specs were synced into openspec/specs/ (or that
+     the sync was explicitly skipped for a good reason).
+  3. Confirm any follow-up issues were filed for things you noticed
+     but did not fix in this change.
+  4. Run `bd gate resolve <gate-id>` to accept. The molecule closes
+     automatically once this final step closes.
+"""

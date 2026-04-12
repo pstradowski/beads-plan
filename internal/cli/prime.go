@@ -15,16 +15,48 @@ Use this skill when:
 - Working on tasks tracked in beads with tier/parallelism metadata
 - Dispatching subtasks to appropriate model tiers
 - Generating or refreshing tasks.md from beads
+- Pouring or working through a meow-openspec molecule (the full
+  gated OpenSpec lifecycle)
+
+## The meow-openspec formula
+
+For the full OpenSpec lifecycle with human-in-the-loop review gates,
+pour the ` + "`meow-openspec`" + ` beads formula instead of invoking
+` + "`beads-plan compile`" + ` directly:
+
+` + "```sh" + `
+bd mol pour meow-openspec \
+    --var change_dir=openspec/changes/my-change \
+    --var change=my-change
+` + "```" + `
+
+The formula creates a fourteen-step gated workflow: seven work phases
+interleaved with six mandatory human review gates. Agents pick up
+ready steps via ` + "`bd ready`" + `; human reviewers resolve gates
+with ` + "`bd gate resolve`" + ` or ` + "`bd human respond`" + `.
+
+The formula's ` + "`plan`" + ` step (step 10) invokes this tool: when
+an agent claims the step, they run
+` + "`beads-plan compile <change-dir> --parent <this-bead-id> --json`" + `
+and record the returned root_id in the step's metadata.
+
+Full runbook: ` + "`docs/meow-openspec-runbook.md`" + `.
 
 ## Commands
 
-### beads-plan plan <change-dir>
-Create a beads epic from an OpenSpec change directory.
+### beads-plan compile <change-dir>
+Compile an OpenSpec change directory into apply-phase beads.
 - Parses tasks.md, proposal.md, design.md, specs/
 - Creates nested bead hierarchy: epic → sub-epics → tasks
 - Assesses complexity and assigns tier (fast/standard/advanced)
 - Analyzes parallelism and creates dependency edges
 - Enriches tasks with context, acceptance criteria, output schema
+
+compile is a leaf tool — it does not orchestrate the full OpenSpec
+lifecycle. For the gated lifecycle (explore → proposal → design → verify
+→ archive with human-in-the-loop checkpoints), pour the meow-openspec
+beads formula via ` + "`bd mol pour meow-openspec --var change_dir=<path>`" + `,
+which invokes this command at its compile step.
 
 Flags:
 - ` + "`--dry-run`" + `: Preview planned structure without creating beads
@@ -87,7 +119,7 @@ OpenSpec artifacts          beads-plan              beads execution
 /opsx:new
 /opsx:continue (repeat)
   → tasks.md ready
-                     ──→  beads-plan plan
+                     ──→  beads-plan compile
                            (compiles tasks.md
                             into bead molecule)
                                               ──→  bd ready → claim → implement → bd close
@@ -102,7 +134,7 @@ OpenSpec artifacts          beads-plan              beads execution
 ### Step by step
 
 1. **Design** (OpenSpec, unchanged): ` + "`/opsx:new`" + ` → ` + "`/opsx:continue`" + ` until tasks.md exists
-2. **Compile** (beads-plan): ` + "`beads-plan plan <change-dir>`" + ` creates the bead molecule
+2. **Compile** (beads-plan): ` + "`beads-plan compile <change-dir>`" + ` creates the bead molecule
 3. **Execute** (beads): ` + "`bd ready`" + ` → claim → implement → ` + "`bd close`" + ` for each task
 4. **Sync status** (beads-plan): ` + "`beads-plan view <epic-id> -o <change-dir>/tasks.md`" + ` updates tasks.md with execution progress
 5. **Verify & archive** (OpenSpec, unchanged): ` + "`/opsx:verify`" + ` → ` + "`/opsx:archive`" + `

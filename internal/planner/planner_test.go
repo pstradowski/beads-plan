@@ -52,6 +52,24 @@ func TestCreateRootEpic(t *testing.T) {
 	if c.Metadata["change"] != "my-change" {
 		t.Errorf("expected metadata change=my-change, got %s", c.Metadata["change"])
 	}
+	if c.Parent != "" {
+		t.Errorf("expected no parent when ParentID is unset, got %q", c.Parent)
+	}
+}
+
+func TestCreateRootEpicWithParentID(t *testing.T) {
+	mc := &mockClient{}
+	p := &Planner{Client: mc, ChangeName: "my-change", ParentID: "bd-grandparent"}
+
+	if _, err := p.CreateRootEpic(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.creates) != 1 {
+		t.Fatalf("expected 1 create call, got %d", len(mc.creates))
+	}
+	if got := mc.creates[0].Parent; got != "bd-grandparent" {
+		t.Errorf("expected parent=bd-grandparent, got %q", got)
+	}
 }
 
 func TestCreateSubEpicsMultiTask(t *testing.T) {
@@ -65,7 +83,7 @@ func TestCreateSubEpicsMultiTask(t *testing.T) {
 		}},
 	}
 
-	ids, err := p.CreateSubEpics("ROOT", sections)
+	ids, err := p.CreateSubEpics("ROOT", sections, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,7 +109,7 @@ func TestCreateSubEpicsCollapse(t *testing.T) {
 		}},
 	}
 
-	ids, err := p.CreateSubEpics("ROOT", sections)
+	ids, err := p.CreateSubEpics("ROOT", sections, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,6 +214,138 @@ func TestCreateDependencies(t *testing.T) {
 	if mc.deps[1] != [2]string{"BEAD-C", "BEAD-B"} {
 		t.Errorf("dep 1: got %v", mc.deps[1])
 	}
+}
+
+func TestCreateTestTaskSubEpicShape(t *testing.T) {
+	mc := &mockClient{}
+	p := &Planner{Client: mc, ChangeName: "test"}
+
+	sections := []parser.Section{
+		{Number: "8", Title: "Formula smoke tests", Tasks: []parser.Task{
+			{Number: "8.1", Title: "Verify formula seed"},
+			{Number: "8.2", Title: "Check mandatory gate rejection"},
+		}},
+	}
+	enriched := map[string]EnrichedTask{
+		"8.1": {Task: sections[0].Tasks[0], IsTest: true, Tier: "advanced", Description: "do smoke test"},
+		"8.2": {Task: sections[0].Tasks[1], IsTest: true, Tier: "standard"},
+	}
+
+	subEpicIDs, err := p.CreateSubEpics("ROOT", sections, enriched)
+	if err != nil {
+		t.Fatalf("sub-epics: %v", err)
+	}
+	taskIDs, err := p.CreateLeafTasks(subEpicIDs, sections, enriched)
+	if err != nil {
+		t.Fatalf("leaf tasks: %v", err)
+	}
+
+	// One section sub-epic + (per task: 1 test-task epic + 3 children) × 2 = 1 + 8 = 9 creates
+	if len(mc.creates) != 9 {
+		t.Fatalf("expected 9 create calls (1 sub-epic + 2×4 test beads), got %d", len(mc.creates))
+	}
+
+	// The first create is the section sub-epic
+	if mc.creates[0].Type != "epic" || mc.creates[0].Parent != "ROOT" {
+		t.Errorf("first create should be the section sub-epic, got %+v", mc.creates[0])
+	}
+
+	// creates[1..4] = task 8.1 sub-epic (epic + execute + run-tests-1 + correct-1)
+	task1Epic := mc.creates[1]
+	if task1Epic.Type != "epic" {
+		t.Errorf("test-task[8.1] should be type=epic, got %s", task1Epic.Type)
+	}
+	if !containsLabel(task1Epic.Labels, "meow:test") {
+		t.Errorf("test-task[8.1] should carry label meow:test, got %v", task1Epic.Labels)
+	}
+
+	execute := mc.creates[2]
+	if execute.Description != "do smoke test" {
+		t.Errorf("execute bead should carry enriched description, got %q", execute.Description)
+	}
+	if execute.Metadata["tier"] != "advanced" {
+		t.Errorf("execute bead should carry tier=advanced, got %v", execute.Metadata)
+	}
+
+	runTests1 := mc.creates[3]
+	if !containsLabel(runTests1.Labels, "meow:test-run") {
+		t.Errorf("run-tests-1 should carry meow:test-run label, got %v", runTests1.Labels)
+	}
+	if runTests1.Metadata["iteration"] != "1" {
+		t.Errorf("run-tests-1 should carry iteration=1 metadata, got %v", runTests1.Metadata)
+	}
+
+	correct1 := mc.creates[4]
+	if !containsLabel(correct1.Labels, "meow:test-correct") {
+		t.Errorf("correct-1 should carry meow:test-correct label, got %v", correct1.Labels)
+	}
+
+	// run-tests-1 depends on execute (the only intra-sub-epic dep)
+	if len(mc.deps) != 2 { // 2 test tasks × 1 run-tests→execute dep each
+		t.Fatalf("expected 2 run-tests→execute deps, got %d: %v", len(mc.deps), mc.deps)
+	}
+	// Primary-closer mapping: taskIDs["8.1"] must be the test-task epic, not execute
+	wantEpicID := "BEAD-2" // 1=section sub-epic, 2=test-task[8.1] epic
+	if taskIDs["8.1"] != wantEpicID {
+		t.Errorf("taskIDs[8.1]: expected test-task epic %s, got %s", wantEpicID, taskIDs["8.1"])
+	}
+
+	// Accumulators: both test-task epic IDs recorded; both execute beads recorded as leaves
+	if len(p.TestTaskIDs) != 2 {
+		t.Errorf("expected 2 test-task epic IDs, got %v", p.TestTaskIDs)
+	}
+	if len(p.LeafIDs) != 2 {
+		t.Errorf("expected 2 leaf IDs (2 execute beads), got %v", p.LeafIDs)
+	}
+	for _, leafID := range p.LeafIDs {
+		if leafID == "BEAD-2" || leafID == "BEAD-6" {
+			t.Errorf("LeafIDs must contain execute beads, not test-task epics; got %v", p.LeafIDs)
+		}
+	}
+}
+
+func TestCollapsedTestTaskSectionGoesUnderRoot(t *testing.T) {
+	mc := &mockClient{}
+	p := &Planner{Client: mc, ChangeName: "test"}
+
+	sections := []parser.Section{
+		{Number: "9", Title: "Lone test", Tasks: []parser.Task{
+			{Number: "9.1", Title: "Single test task"},
+		}},
+	}
+	enriched := map[string]EnrichedTask{
+		"9.1": {Task: sections[0].Tasks[0], IsTest: true, Tier: "fast"},
+	}
+
+	subEpicIDs, err := p.CreateSubEpics("ROOT", sections, enriched)
+	if err != nil {
+		t.Fatalf("sub-epics: %v", err)
+	}
+
+	// Collapsed: NO section sub-epic wrapper, but the test-task
+	// four-bead structure still lives directly under ROOT.
+	if len(mc.creates) != 4 {
+		t.Fatalf("expected 4 creates (test-task epic + 3 children, no section wrapper), got %d", len(mc.creates))
+	}
+	if mc.creates[0].Parent != "ROOT" {
+		t.Errorf("test-task epic should be a child of ROOT in the collapsed case, got parent=%q", mc.creates[0].Parent)
+	}
+	if !containsLabel(mc.creates[0].Labels, "meow:test") {
+		t.Errorf("collapsed test-task should carry meow:test label, got %v", mc.creates[0].Labels)
+	}
+	// The sub-epic map points to the test-task epic (primary closer)
+	if subEpicIDs[0] != "BEAD-1" {
+		t.Errorf("collapsed sub-epic map should point at the test-task epic, got %q", subEpicIDs[0])
+	}
+}
+
+func containsLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCreateRootEpicDefaultPriority(t *testing.T) {

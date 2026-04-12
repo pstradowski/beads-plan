@@ -15,51 +15,45 @@ import (
 var (
 	profileFlag   string
 	dryRunFlag    bool
+	parentFlag    string
 	changeDirFlag string
 )
 
-// PlanOutput is the JSON-serializable result of the plan command.
-type PlanOutput struct {
-	RootID      string            `json:"root_id"`
-	ChangeName  string            `json:"change_name"`
-	Profile     string            `json:"profile,omitempty"`
-	TotalTasks  int               `json:"total_tasks"`
-	Sections    int               `json:"sections"`
-	DepsCreated int               `json:"deps_created"`
-	DryRun      bool              `json:"dry_run"`
-	SubEpics    map[string]string `json:"sub_epics,omitempty"`
-	TaskIDs     map[string]string `json:"task_ids,omitempty"`
-}
+var compileCmd = &cobra.Command{
+	Use:   "compile <change-dir>",
+	Short: "Compile OpenSpec change into apply-phase beads",
+	Long: `Compile an OpenSpec change directory into a nested beads epic: sub-epics per
+section, enriched leaf tasks with complexity tiers, and dependency edges from
+parallelism analysis.
 
-var planCmd = &cobra.Command{
-	Use:   "plan <change-dir>",
-	Short: "Create beads epic from OpenSpec change",
-	Long:  "Read OpenSpec artifacts and create a nested beads epic with sub-epics, tasks, dependencies, tier assignments, and parallelism analysis.",
-	Args:  cobra.ExactArgs(1),
+compile is a leaf tool. It does not orchestrate the OpenSpec lifecycle
+(explore / proposal / design / verify / archive). For the full lifecycle,
+pour the meow-openspec beads formula via ` + "`bd mol pour meow-openspec`" + `,
+which invokes this command at its compile step.`,
+	Args: cobra.ExactArgs(1),
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if dryRunFlag {
 			return nil // skip dep checks for dry-run
 		}
 		return checkBd()
 	},
-	RunE: runPlan,
+	RunE: runCompile,
 }
 
 func init() {
-	planCmd.Flags().StringVar(&profileFlag, "profile", "", "Provider profile for tier-to-model mapping")
-	planCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview planned structure without creating beads")
+	compileCmd.Flags().StringVar(&profileFlag, "profile", "", "Provider profile for tier-to-model mapping")
+	compileCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Preview planned structure without creating beads")
+	compileCmd.Flags().StringVar(&parentFlag, "parent", "", "Parent bead ID: create the root epic as a child of this bead (for formula-step grafting)")
 }
 
-func runPlan(cmd *cobra.Command, args []string) error {
+func runCompile(cmd *cobra.Command, args []string) error {
 	changeDir := args[0]
 
-	// Resolve to absolute path
 	if !filepath.IsAbs(changeDir) {
 		cwd, _ := os.Getwd()
 		changeDir = filepath.Join(cwd, changeDir)
 	}
 
-	// Load config and resolve profile
 	cfg, err := config.LoadDefault()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -74,25 +68,20 @@ func runPlan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Parse artifacts
 	artifacts, err := parser.LoadArtifacts(changeDir)
 	if err != nil {
 		return fmt.Errorf("loading artifacts: %w", err)
 	}
 
-	// Parse tasks.md
 	taskTree, err := parser.ParseTasksMarkdown(artifacts.Tasks)
 	if err != nil {
 		return fmt.Errorf("parsing tasks: %w", err)
 	}
 
-	// Enrich tasks
 	enriched := planner.EnrichTasks(taskTree.Sections, artifacts, nil)
 
-	// Analyze parallelism
 	sectionParallel := planner.AnalyzeSectionParallelism(taskTree.Sections)
 
-	// Collect all dep edges from section and task-level analysis
 	var allEdges []planner.DepEdge
 	allEdges = append(allEdges, sectionParallel.DepEdges...)
 	for _, s := range taskTree.Sections {
@@ -101,66 +90,75 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRunFlag {
-		return runDryRun(artifacts, taskTree, enriched, sectionParallel, allEdges, profileName)
+		return runCompileDryRun(artifacts, taskTree, enriched, sectionParallel, allEdges, profileName)
 	}
 
-	// Create beads
 	p := &planner.Planner{
 		Client:     &planner.BdCLI{},
 		ChangeName: artifacts.ChangeName,
+		ParentID:   parentFlag,
 	}
 
-	// Root epic
 	rootID, err := p.CreateRootEpic()
 	if err != nil {
 		return fmt.Errorf("creating root epic: %w", err)
 	}
 
-	// Sub-epics
-	subEpicIDs, err := p.CreateSubEpics(rootID, taskTree.Sections)
+	subEpicIDs, err := p.CreateSubEpics(rootID, taskTree.Sections, enriched)
 	if err != nil {
 		return fmt.Errorf("creating sub-epics: %w", err)
 	}
 
-	// Leaf tasks
 	taskIDs, err := p.CreateLeafTasks(subEpicIDs, taskTree.Sections, enriched)
 	if err != nil {
 		return fmt.Errorf("creating leaf tasks: %w", err)
 	}
 
-	// Dependencies
 	depsCreated, err := p.CreateDependencies(taskIDs, allEdges)
 	if err != nil {
 		return fmt.Errorf("creating dependencies: %w", err)
 	}
 
-	// Build output
-	subEpicNames := make(map[string]string)
-	for i, s := range taskTree.Sections {
-		subEpicNames[s.Number+". "+s.Title] = subEpicIDs[i]
-	}
-
-	output := PlanOutput{
-		RootID:      rootID,
-		ChangeName:  artifacts.ChangeName,
-		Profile:     profileName,
-		TotalTasks:  taskTree.TotalTasks(),
-		Sections:    len(taskTree.Sections),
-		DepsCreated: depsCreated,
-		DryRun:      false,
-		SubEpics:    subEpicNames,
-		TaskIDs:     taskIDs,
-	}
-
 	_ = profile // profile used indirectly via enrichment
+	_ = taskIDs // task→primary-closer map, owned by the planner for dep wiring
 
-	text := fmt.Sprintf("Created epic %s with %d sections, %d tasks, %d dependencies",
+	if jsonOutput {
+		return PrintJSONCompact(buildCompileSummary(rootID, p))
+	}
+
+	fmt.Printf("Compiled epic %s with %d sections, %d tasks, %d dependencies\n",
 		rootID, len(taskTree.Sections), taskTree.TotalTasks(), depsCreated)
-	PrintOutput(output, text)
 	return nil
 }
 
-func runDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[string]planner.EnrichedTask, sectionParallel planner.ParallelismResult, edges []planner.DepEdge, profileName string) error {
+// buildCompileSummary copies the accumulators the planner filled during
+// bead creation into the frozen CompileSummary shape (see
+// openspec/changes/meow-openspec-execution/specs/meow-test-correction-loop/
+// spec.md §"JSON summary contract"). LeafIDs contains the execute bead
+// of each test-task sub-epic but not its run-tests-N or correct-N
+// children; TestTaskIDs contains the test-task epic IDs.
+func buildCompileSummary(rootID string, p *planner.Planner) planner.CompileSummary {
+	leafIDs := append([]string{}, p.LeafIDs...)
+	testTaskIDs := append([]string{}, p.TestTaskIDs...)
+	tiers := make(map[string]string, len(p.Tiers))
+	for k, v := range p.Tiers {
+		tiers[k] = v
+	}
+	if leafIDs == nil {
+		leafIDs = []string{}
+	}
+	if testTaskIDs == nil {
+		testTaskIDs = []string{}
+	}
+	return planner.CompileSummary{
+		RootID:      rootID,
+		LeafIDs:     leafIDs,
+		TestTaskIDs: testTaskIDs,
+		Tiers:       tiers,
+	}
+}
+
+func runCompileDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[string]planner.EnrichedTask, sectionParallel planner.ParallelismResult, edges []planner.DepEdge, profileName string) error {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("=== Dry Run: %s ===\n\n", artifacts.ChangeName))
@@ -187,10 +185,15 @@ func runDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[
 				status = "[x]"
 			}
 			tier := ""
+			testMarker := ""
 			if e, ok := enriched[t.Number]; ok {
 				tier = fmt.Sprintf(" [%s]", e.Tier)
+				if e.IsTest {
+					testMarker = fmt.Sprintf(" [TEST:%s]", e.TestRule)
+				}
 			}
-			b.WriteString(fmt.Sprintf("    %s %s %s%s\n", status, t.Number, t.Title, tier))
+			title := planner.StripTestMarker(t.Title)
+			b.WriteString(fmt.Sprintf("    %s %s %s%s%s\n", status, t.Number, title, tier, testMarker))
 		}
 		b.WriteString("\n")
 	}
@@ -202,18 +205,9 @@ func runDryRun(artifacts *parser.Artifacts, tree *parser.TaskTree, enriched map[
 		}
 	}
 
-	if jsonOutput {
-		output := PlanOutput{
-			ChangeName:  artifacts.ChangeName,
-			Profile:     profileName,
-			TotalTasks:  tree.TotalTasks(),
-			Sections:    len(tree.Sections),
-			DepsCreated: len(edges),
-			DryRun:      true,
-		}
-		return PrintJSON(output)
-	}
-
+	// --dry-run + --json is intentionally not a machine-readable path:
+	// the CompileSummary contract is only emitted on successful bead
+	// creation. Dry-run is for human preview, so print text regardless.
 	fmt.Print(b.String())
 	return nil
 }

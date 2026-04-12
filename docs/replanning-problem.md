@@ -86,7 +86,7 @@ When a discovery invalidates part of the plan:
 
 ### 3. Incremental vs. full replan
 
-Full replan (`beads-plan plan` from scratch) is simpler but wasteful — it discards completed work context and creates duplicate beads. Incremental replan requires diffing the old plan against the new one and surgically updating only what changed, which is significantly more complex.
+Full replan (`beads-plan compile` from scratch) is simpler but wasteful — it discards completed work context and creates duplicate beads. Incremental replan requires diffing the old plan against the new one and surgically updating only what changed, which is significantly more complex.
 
 ### 4. Orchestrator authority
 
@@ -111,7 +111,7 @@ If discoveries contain replan triggers:
   → Flag affected downstream tasks
   → Present to human/supervisor for replan decision
   → Either: update affected task descriptions in-place
-  → Or: run beads-plan plan again for remaining work
+  → Or: run beads-plan compile again for remaining work
   ↓
 Wave 2 executes (with updated tasks)
 ```
@@ -166,7 +166,7 @@ After significant tasks complete, re-run the full planning process against updat
 ```
 Tasks complete → update OpenSpec design/specs with new knowledge
   ↓
-beads-plan plan --diff <change-dir> <existing-epic-id>
+beads-plan compile --diff <change-dir> <existing-epic-id>
   ↓
 Diff output:
   - Tasks to keep (unchanged)

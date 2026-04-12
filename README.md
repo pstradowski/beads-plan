@@ -8,19 +8,64 @@ Convert [OpenSpec](https://github.com/steveyegge/openspec) task plans into execu
 
 [MEOW](https://steve-yegge.medium.com/welcome-to-gas-town-4f25ee16dd04) (Molecular Expression of Work) is the five-layer orchestration model from Steve Yegge's Gas Town:
 
-```
-Formula → Protomolecule → Molecule → Epics → Beads
-  (TOML)    (template)     (running)   (groups)  (atoms)
+```mermaid
+flowchart LR
+    F[Formula<br/>TOML template] --> P[Protomolecule<br/>template epic]
+    P --> M[Molecule<br/>running workflow]
+    M --> E[Epics<br/>phase groups]
+    E --> B[Beads<br/>atoms of work]
+    classDef layer fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    class F,P,M,E,B layer
 ```
 
 beads-plan operates at the **Protomolecule → Molecule** transition:
 
-```
-OpenSpec tasks.md  ──→  beads-plan plan  ──→  Bead molecule
-  (protomolecule)         (compiler)          (running workflow)
+```mermaid
+flowchart LR
+    tasks[tasks.md<br/>+ proposal + design + specs] --> compile[beads-plan compile]
+    compile --> molecule[bead molecule<br/>root epic → sub-epics → enriched tasks]
+    molecule --> bdready[bd ready]
+    bdready --> agents[agents execute]
+    classDef input fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef tool fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef output fill:#dcfce7,stroke:#16a34a,color:#14532d
+    class tasks input
+    class compile,bdready tool
+    class molecule,agents output
 ```
 
 It takes a structured plan (tasks.md + specs + design) and compiles it into a dependency graph of beads that agents can execute via `bd ready`.
+
+### The `meow-openspec` formula
+
+Compiling the apply phase is only half of the story. The project also ships a beads formula, `.beads/formulas/meow-openspec.formula.toml`, that wraps the full OpenSpec lifecycle in a gated bead molecule: every phase transition is a human-in-the-loop review that must be resolved before the next phase proceeds. Pour it with:
+
+```sh
+bd mol pour meow-openspec --var change_dir=openspec/changes/my-change --var change=my-change
+```
+
+This creates fourteen beads in order — seven work phases interleaved with six mandatory human review gates — and hands them to `bd ready`:
+
+```mermaid
+flowchart TD
+    e[1 explore] --> p[2 proposal]
+    p --> pr{{3 proposal-review}}
+    pr --> s[4 specs] --> sr{{5 specs-review}}
+    sr --> d[6 design] --> dr{{7 design-review}}
+    dr --> t[8 tasks] --> tr{{9 tasks-review}}
+    tr --> pl[10 plan<br/>runs beads-plan compile]
+    pl --> v[11 verify] --> vr{{12 verify-review}}
+    vr --> a[13 archive] --> ar{{14 archive-review}}
+
+    classDef gate fill:#fde4a5,stroke:#ca8a04,color:#422006
+    classDef mandatory fill:#fda4af,stroke:#be123c,color:#4c0519
+    classDef work fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    class pr,dr,vr,ar mandatory
+    class sr,tr gate
+    class e,p,s,d,t,pl,v,a work
+```
+
+Red hexagons are the four mandatory review gates that define the floor — nothing proceeds past proposal, past design, past verify, or into archive without a human resolving the gate. Yellow hexagons are the additional specs/tasks review gates (hardcoded in v1). At each gate a reviewer runs `bd gate resolve <gate-id>` or `bd human respond <id>` to unblock the next phase.
 
 ## Installation
 
@@ -49,17 +94,21 @@ make install
 
 ### Prerequisites
 
-- [bd](https://github.com/steveyegge/beads) — required for `plan` and `view` commands
-- [openspec](https://github.com/steveyegge/openspec) — optional, for `plan` command only
+- [bd](https://github.com/steveyegge/beads) **>= 1.0.0** — required for `compile` and `view` commands, and for pouring the `meow-openspec` formula. The formula uses `bd formula`, `bd cook`, `bd mol pour`, `bd gate`, and `bd mol ready --gated`; all of these land in 1.0.0. Verify with `bd version` and `make test-formula`.
+- [openspec](https://github.com/steveyegge/openspec) — optional, for `compile` command only
+
+### Migration note: `plan` → `compile`
+
+The `beads-plan plan` subcommand has been renamed to `beads-plan compile`. The flag set and behavior are unchanged; if you had muscle memory or scripts calling `beads-plan plan <change-dir>`, replace the verb with `compile`. The rename reflects the command's leaf-tool role — it compiles a change directory into apply-phase beads, it does not orchestrate the OpenSpec lifecycle. For the gated lifecycle, see [the meow-openspec formula section above](#the-meow-openspec-formula) and the runbook at `docs/meow-openspec-runbook.md`.
 
 ## Quick start
 
 ```sh
 # 1. Preview what beads-plan would create (no side effects)
-beads-plan plan --dry-run path/to/openspec/changes/my-feature
+beads-plan compile --dry-run path/to/openspec/changes/my-feature
 
 # 2. Create the beads molecule for real
-beads-plan plan path/to/openspec/changes/my-feature
+beads-plan compile path/to/openspec/changes/my-feature
 
 # 3. Start working — bd ready shows unblocked tasks
 bd ready
@@ -73,9 +122,9 @@ beads-plan prime > SKILL.md
 
 ## Commands
 
-### `beads-plan plan <change-dir>`
+### `beads-plan compile <change-dir>`
 
-Read OpenSpec artifacts from a change directory and create a nested beads epic.
+Compile an OpenSpec change directory into apply-phase beads: a nested epic, enriched leaf tasks, and dependency edges. This command is a leaf tool — for the gated OpenSpec lifecycle with human-in-the-loop checkpoints, pour the `meow-openspec` beads formula via `bd mol pour meow-openspec`, which invokes `compile` at its compile step.
 
 **What it does:**
 1. Parses `tasks.md` into sections and checkbox tasks
@@ -140,7 +189,7 @@ Config file discovery order:
 1. Current directory → parent directories (up to git root)
 2. `~/.config/beads-plan/config.toml`
 
-Use `--profile` to override: `beads-plan plan --profile openai ./changes/my-feature`
+Use `--profile` to override: `beads-plan compile --profile openai ./changes/my-feature`
 
 Without a profile, tiers are stored in metadata but no model string is resolved.
 
