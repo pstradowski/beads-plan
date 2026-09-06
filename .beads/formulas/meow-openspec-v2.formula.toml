@@ -1,0 +1,376 @@
+formula = "meow-openspec-v2"
+description = """
+Full OpenSpec lifecycle as a gated bead molecule — v2.
+
+v2 reorders and extends meow-openspec (v1) based on the 2026-09-06
+session review of three real cycles (ebus-worker-qpo, add-monitoring-stack
+aka infra-mol, migrate-monitoring-to-5090):
+
+Changes vs v1:
+  1. proposal.md + design.md are drafted TOGETHER before the first human
+     gate (operators review the argument as a whole; v1's proposal ->
+     specs -> design order forced three separate review rounds).
+  2. NEW independent-review step: a FRESH-CONTEXT agent (no session
+     history) reviews proposal+design for logic and alignment after
+     human acceptance. Can reopen the drafting step on FAIL.
+  3. specs + tasks.md are drafted together behind the independent
+     review, then gated once.
+  4. compile step uses PHASE-LEVEL granularity (one bead per tasks.md
+     section, dependency chain preserved) instead of v1's deep nested
+     leaf molecules (infra-mol-gqq.3.1.1-style micro-beads proved too
+     fine for operator review).
+  5. NEW self-containment-lint step: every compiled bead is audited
+     against the self-containment checklist before dispatch.
+  6. NEW dispatch step: implementation is handed to subagent(s) with
+     fresh context; all code goes to a feature branch; operator inputs
+     surface via bd human ask, never by stalling silently.
+  7. verify uses openspec validate --strict; archive only after a human
+     acknowledges the verify report.
+
+Phase ordering:
+  explore -> draft-pd -> [GATE pd-review] -> independent-review ->
+  draft-st -> [GATE st-review] -> compile -> self-containment-lint ->
+  [GATE molecule-review] -> dispatch -> verify -> [GATE verify-review]
+  -> archive -> [GATE archive-review]
+
+Instantiate with:
+  bd mol pour meow-openspec-v2 \
+    --var change_dir=openspec/changes/my-change \
+    --var change=my-change
+
+Requires bd >= 1.2.2 with the gate custom type registered
+(bd config set types.custom '["gate"]').
+"""
+phase = "liquid"
+
+[vars]
+change_dir = { required = true, description = "Path to the OpenSpec change directory, e.g. openspec/changes/my-change" }
+change = { default = "<change>", description = "Change identifier used in titles and descriptions" }
+branch = { default = "change/{{change}}", description = "Feature branch for all artifacts and implementation code" }
+impl_agent = { default = "pi-executor", description = "Subagent role name for implementation dispatch" }
+review_agent = { default = "pi-reviewer", description = "Subagent role name for the independent fresh-context review" }
+
+#
+# 1. Explore — optional context-gathering phase with no gate.
+#
+[[steps]]
+id = "explore"
+title = "Explore the problem space for {{change}}"
+type = "task"
+labels = ["meow:phase", "meow:explore"]
+description = """
+Investigate the problem before committing to a change.
+
+Read related code and prior beads (bd list --all, bd remember), scan
+docs, verify claims about current state on the actual hosts when
+relevant (this session's micro-ebusd mistake — assuming firmware
+capabilities from docs instead of checking the device — cost hours).
+Capture notes at {{change_dir}}/notes.md. No artifact required.
+
+Close when you have enough context to draft proposal + design.
+"""
+
+#
+# 2. Draft proposal + design together.
+#
+[[steps]]
+id = "draft-pd"
+title = "Draft proposal.md AND design.md for {{change}}"
+type = "task"
+depends_on = ["explore"]
+labels = ["meow:phase", "meow:draft-pd"]
+description = """
+Draft {{change_dir}}/proposal.md and {{change_dir}}/design.md TOGETHER,
+on the feature branch {{branch}}.
+
+proposal.md: Why (grounded in verified current state, not assumptions),
+What Changes, Impact. design.md: context, goals/non-goals, numbered
+decisions each with rationale AND alternatives considered, migration or
+rollout plan when state moves, risk table.
+
+Rules learned from real cycles:
+- Verify "current state" claims against reality (hosts, containers,
+  beads) and date-stamp them.
+- Every user-visible trade-off is a numbered decision with alternatives.
+- Write for a reader with NO session context: paths, commands, IPs,
+  host aliases inline.
+
+Commit both to {{branch}}. Do NOT draft specs or tasks yet.
+"""
+
+#
+# 3. GATE — human accepts proposal + design (iterate).
+#
+[[steps]]
+id = "pd-review"
+title = "Human review: accept proposal + design for {{change}}"
+type = "task"
+depends_on = ["draft-pd"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory"]
+description = """
+Mandatory human review gate for proposal.md + design.md.
+
+To resolve:
+1. Read both files at {{change_dir}}/.
+2. Challenge assumptions; iterate with the drafting agent until the
+   decisions are right (reopen the draft-pd bead as many times as
+   needed: bd gate resolve only when you would sign your name on it).
+3. Run: bd gate resolve <gate-id> to accept.
+"""
+
+#
+# 4. Independent fresh-context review.
+#
+[[steps]]
+id = "independent-review"
+title = "Independent review: fresh-context agent audits proposal + design"
+type = "task"
+depends_on = ["pd-review"]
+labels = ["meow:phase", "meow:independent-review"]
+description = """
+A FRESH-CONTEXT reviewer agent — NOT the session that drafted the
+documents, no shared conversation history — reads proposal.md and
+design.md cold and checks:
+
+- Internal logic: does each decision's rationale hold? Do goals
+  actually follow from the Why?
+- Alignment: does What Changes match the goals? Are non-goals
+  genuinely excluded?
+- Reality check: are current-state claims verifiable from the repo /
+  hosts? Flag any claim that smells like conversation-only knowledge.
+- Completeness: are failure modes, rollback, and operator steps
+  identified? Is anything chained to a single machine that should
+  not be (alerting lesson, 2026-09-06)?
+
+Verdict in the bead comment: PASS or FAIL with concrete revision notes.
+On FAIL: bd reopen <draft-pd-bead-id> with the notes attached, and stop
+— the gate will re-block. On PASS: close this bead.
+"""
+
+#
+# 5. Draft specs + tasks together.
+#
+[[steps]]
+id = "draft-st"
+title = "Draft specs/ deltas and tasks.md for {{change}}"
+type = "task"
+depends_on = ["independent-review"]
+labels = ["meow:phase", "meow:draft-st"]
+description = """
+Draft {{change_dir}}/specs/<capability>/spec.md (ADDED/MODIFIED
+requirements, every requirement with at least one #### Scenario:) and
+{{change_dir}}/tasks.md — numbered, sectioned (## 1..N per phase),
+each task one verifiable action. Include a Sign-off criteria section.
+
+specs encode acceptance (scenarios are testable); tasks encode
+execution order. tasks.md sections become the compiled phase beads,
+so keep sections coherent and sequential. openspec validate
+{{change}} --strict must pass. Commit to {{branch}}.
+"""
+
+#
+# 6. GATE — human accepts specs + tasks.
+#
+[[steps]]
+id = "st-review"
+title = "Human review: accept specs + tasks for {{change}}"
+type = "task"
+depends_on = ["draft-st"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory"]
+description = """
+Mandatory human review gate for the specs deltas and tasks.md.
+
+To resolve:
+1. Read specs/ and tasks.md at {{change_dir}}/.
+2. Check every requirement has scenarios; every task maps to a
+   requirement or a migration/verification step; operator-manual
+   steps are explicitly marked.
+3. Run: bd gate resolve <gate-id>.
+"""
+
+#
+# 7. Compile to phase-level beads.
+#
+[[steps]]
+id = "compile"
+title = "Compile phase-level execution beads for {{change}}"
+type = "task"
+depends_on = ["st-review"]
+labels = ["meow:phase", "meow:compile"]
+waits_for = "all-children"
+description = """
+Compile {{change_dir}}/tasks.md into an execution epic with PHASE-LEVEL
+beads (one bead per tasks.md section, strict dependency chain in
+section order), grafted under this bead:
+
+  beads-plan compile {{change_dir}} --parent <this-bead-id> \\
+    --granularity phase --json
+
+(v1's deep nested leaf molecules are retired: micro-beads 4 levels deep
+could not be operator-reviewed; phase beads carry their tasks.md
+section inline. Use leaf granularity only inside a section that is
+genuinely parallelizable, and only with explicit self-contained
+descriptions.)
+"""
+
+#
+# 8. Self-containment lint.
+#
+[[steps]]
+id = "self-containment-lint"
+title = "Audit every execution bead for self-containment"
+type = "task"
+depends_on = ["compile"]
+labels = ["meow:phase", "meow:lint"]
+description = """
+Walk every compiled bead and verify a FRESH agent could execute it
+from the bead text + repo alone. Checklist (each item found missing a
+real gap in the 2026-09-06 audit):
+
+- [ ] Names the authoritative artifacts (openspec paths, specs).
+- [ ] Every command is copy-pasteable: full flags, run-from directory.
+- [ ] Host facts inline: which machine (local? ssh alias?), IPs,
+      ports, file paths, service names.
+- [ ] No references to artifacts that earlier beads did not create
+      (the ebus-monitoring-env orphan lesson).
+- [ ] Expected values stated concretely (monitor counts, IDs) so an
+      executor can detect drift instead of trusting numbers.
+- [ ] Operator-manual steps marked and surfaced via 'bd human ask'.
+- [ ] Rollback / fallback stated where state moves.
+
+Fix gaps by editing the bead descriptions directly (bd update <id> -d).
+Close with a summary of what was patched.
+"""
+
+#
+# 9. GATE — human accepts the molecule + dispatch plan.
+#
+[[steps]]
+id = "molecule-review"
+title = "Human review: accept execution molecule + dispatch plan"
+type = "task"
+depends_on = ["self-containment-lint"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory"]
+description = """
+Mandatory human review gate before implementation starts.
+
+To resolve:
+1. bd show <epic-id> — review every phase bead, the dependency chain,
+   and the lint summary.
+2. Confirm the dispatch plan: which subagent role ({{impl_agent}}),
+   branch {{branch}}, single walker vs per-lane agents.
+3. Run: bd gate resolve <gate-id>. Nothing executes before this.
+"""
+
+#
+# 10. Dispatch implementation to subagent(s).
+#
+[[steps]]
+id = "dispatch"
+title = "Dispatch implementation to subagent(s) on {{branch}}"
+type = "task"
+depends_on = ["molecule-review"]
+labels = ["meow:phase", "meow:dispatch"]
+waits_for = "all-children"
+description = """
+Hand the execution epic to implementation subagent(s) and let them
+run automagically. Orchestrator duties:
+
+1. Ensure feature branch {{branch}} exists; implementation commits
+   ONLY there (never main — the 2026-09-06 concurrent-session rebase
+   conflict is the cautionary tale).
+2. Spawn subagent(s) with FRESH context, prompt containing exactly:
+   - the epic bead id and 'bd show/ready/claim/close' workflow,
+   - the repo + branch,
+   - 'run quality gates before closing any code bead',
+   - 'if an operator input is needed: bd human ask, then continue
+     other ready work — never stall silently',
+   - 'if a bead's facts drift from reality, stop that lane and ask'.
+3. One agent walking the dependency chain by default; parallel
+   subagents only for lanes the molecule marks independent.
+4. Close this bead when all execution-bead children are closed.
+"""
+
+#
+# 11. Verify.
+#
+[[steps]]
+id = "verify"
+title = "Verify implementation for {{change}}"
+type = "task"
+depends_on = ["dispatch"]
+labels = ["meow:phase", "meow:verify"]
+description = """
+Verification pass on {{branch}}:
+
+- openspec validate {{change}} --strict (capture output)
+- every tasks.md box ticked; every Sign-off criterion met with
+  evidence (commands run, values observed)
+- repo quality gates green (tests, linters, builds)
+- tasks.md + sign-off updated in the same commit; PR description
+  lists pinned versions/digests
+
+The 2026-09-06 lesson is why this gate exists: a prior session's
+deploy had async-def on_connect that gmqtt never awaited — 23h of
+silent no-op that only live verification caught.
+"""
+
+#
+# 12. GATE — human acknowledges verify report.
+#
+[[steps]]
+id = "verify-review"
+title = "Human review: accept verify report for {{change}}"
+type = "task"
+depends_on = ["verify"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory"]
+description = """
+Mandatory human review gate for the verify report.
+
+To resolve:
+1. Read the verify bead's evidence.
+2. Decide merge: PR from {{branch}} to main (squash or rebase per
+   repo convention), or send back with notes.
+3. Run: bd gate resolve <gate-id>.
+"""
+
+#
+# 13. Archive.
+#
+[[steps]]
+id = "archive"
+title = "Archive {{change}} and close the molecule"
+type = "task"
+depends_on = ["verify-review"]
+labels = ["meow:phase", "meow:archive"]
+description = """
+Finalize:
+- merge {{branch}} (or confirm merge done at the verify gate)
+- openspec archive {{change}} (moves to archive/, merges spec deltas)
+- commit archive move + push (both remotes where present)
+- bd dolt push
+- close the execution epic with a completion comment referencing the
+  archived change
+"""
+
+#
+# 14. GATE — final human acknowledgement.
+#
+[[steps]]
+id = "archive-review"
+title = "Human review: final archive checkpoint for {{change}}"
+type = "task"
+depends_on = ["archive"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory"]
+description = """
+Final checkpoint: confirm the change is archived, beads synced, and
+follow-up beads (if any) filed.
+
+To resolve: spot-check openspec/changes/archive/, then
+bd gate resolve <gate-id>.
+"""
