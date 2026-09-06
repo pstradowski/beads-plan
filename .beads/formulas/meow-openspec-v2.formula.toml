@@ -203,16 +203,23 @@ waits_for = "all-children"
 description = """
 Compile {{change_dir}}/tasks.md into an execution epic with PHASE-LEVEL
 beads (one bead per tasks.md section, strict dependency chain in
-section order), grafted under this bead:
+section order), grafted under this bead. No beads-plan needed — hand-roll:
 
-  beads-plan compile {{change_dir}} --parent <this-bead-id> \\
-    --granularity phase --json
+  1. EPIC=$(bd create "Execute {{change}}" -t epic \
+       --parent <this-bead-id> -p 1 -d "...")
+  2. For each '## N. <section>' in tasks.md, in order:
+       bd create "Phase N: <section title>" -t task -p 1 --parent $EPIC \
+         -d "openspec tasks section N: paste the section's tasks verbatim
+             PLUS environment facts (hosts, ssh aliases, paths, commands)
+             inline"
+  3. Chain: bd dep <bead-N> --blocks <bead-N+1>
+  4. Operator-manual steps inside a section stay in that section's bead;
+     they get surfaced later via 'bd human ask'.
 
-(v1's deep nested leaf molecules are retired: micro-beads 4 levels deep
-could not be operator-reviewed; phase beads carry their tasks.md
-section inline. Use leaf granularity only inside a section that is
-genuinely parallelizable, and only with explicit self-contained
-descriptions.)
+Rules: one bead per section (NOT per task — 4-deep micro-beads from the
+compile-tool era could not be operator-reviewed); every description
+self-contained (the lint step audits this); tasks.md stays the
+checkbox source of truth.
 """
 
 #

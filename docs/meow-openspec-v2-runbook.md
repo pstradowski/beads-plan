@@ -83,10 +83,12 @@ infra-1tc (monitoring → 5090). Use `--granularity phase`. Leaf granularity
 remains available for genuinely parallel sections, but every leaf must
 still pass the self-containment checklist.
 
-## Known tool deltas needed
+## Tool deltas needed
 
-- `beads-plan compile --granularity phase` — phase-bead mode (currently
-  compiles leaf molecules). Interim: hand-roll phase beads as in infra-1tc
-  and note it in the compile bead.
-- `bd reopen` used by the independent reviewer to loop drafting — verify
-  against installed bd version (1.2.2).
+- None blocking. v2 is bd-only (formula + gates + hand-rolled compile).
+- `bd reopen` used by the independent reviewer to loop drafting — worked on
+  bd 1.2.2 during testing; the gate mechanism and pour were verified
+  end-to-end in a throwaway DB on 2026-09-06.
+- (Optional, later) a `compile` helper script for the bd-create hand-roll
+  pattern — pure convenience, not a dependency.
+- v1 smoke-test equivalent (`make test-formula`) has no v2 case yet.
