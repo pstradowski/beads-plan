@@ -23,7 +23,7 @@ Changes vs v1:
      against the self-containment checklist before dispatch.
   6. NEW dispatch step: implementation is handed to subagent(s) with
      fresh context; all code goes to a feature branch; operator inputs
-     surface via bd human ask, never by stalling silently.
+     surface via question beads (--labels human, answered via bd close --comment), never by stalling silently.
   7. verify uses openspec validate --strict; archive only after a human
      acknowledges the verify report.
 
@@ -67,6 +67,15 @@ relevant (this session's micro-ebusd mistake — assuming firmware
 capabilities from docs instead of checking the device — cost hours).
 Capture notes at {{change_dir}}/notes.md. No artifact required.
 
+ASK, DON'T GUESS: while exploring, surface genuine ambiguities to the
+operator early — create a question bead (protocol in the draft-pd
+step; verified mechanics: bd create --labels human, answer via
+bd close --comment). Good explore-phase questions: which aspects the
+operator cares about most, what "done" looks like to them, known
+constraints not visible in the repo. Answering 3 good questions here
+saves a rejected design later. Continue other ready work while
+waiting; never stall silently.
+
 Close when you have enough context to draft proposal + design.
 """
 
@@ -83,15 +92,63 @@ description = """
 Draft {{change_dir}}/proposal.md and {{change_dir}}/design.md TOGETHER,
 on the feature branch {{branch}}.
 
-proposal.md: Why (grounded in verified current state, not assumptions),
-What Changes, Impact. design.md: context, goals/non-goals, numbered
-decisions each with rationale AND alternatives considered, migration or
-rollout plan when state moves, risk table.
+BEFORE WRITING, ask about every user-facing choice that is cheap to
+state now and expensive to discover later. The ask protocol (mechanics
+verified on bd 1.2.2):
+
+  1. Create the question bead:
+       bd create "Q: <question> (change {{change}})" --labels human \
+         -d "<options A/B/C + recommendation, per the form below>"
+     (the 'human' label puts it in 'bd human list' — the operator's
+     single queue of things awaiting their input)
+  2. If the answer gates ALL further drafting:
+       bd dep <question-id> --blocks <this-bead-id>
+     so 'bd ready' reflects the block. Otherwise no dep — keep
+     working on parts the answer doesn't change.
+  3. The operator answers (bd human list shows the queue):
+       bd close <question-id> --comment "<answer>"
+     (NB: 'bd human respond' is broken in bd 1.2.2 — 'storage is nil'
+     — use bd close --comment, which is the same thing.)
+  4. The drafting agent reads the answer from the closed bead and
+     proceeds; record it in design.md as provenance.
+
+The question protocol — each question must offer concrete options and
+a recommendation (the 2026-09-06 alerting lesson: iMessage-on-the-mini
+sailed through proposal AND design because nobody asked 'should alert
+delivery depend on the mini?' — the operator caught it in review, but
+one good question at draft time would have saved a full design revision):
+
+  1. Ask when a decision: (a) changes user-visible behavior, (b) picks
+     a technology/provider/channel, (c) places state on a specific host,
+     (d) names a thing the operator will live with, or (e) trades
+     reliability vs simplicity in a way only the operator can weigh.
+  2. DON'T ask about anything verifiable from the repo/hosts yourself —
+     asking is for preferences and trade-offs, not for research the
+     agent should have done (reading docs, checking configs, testing
+     reachability).
+  3. Form: 'Q: <question>? Options: A) ..., B) ..., C) ... .
+     Recommended: <X> because <one line>. Reply A/B/C or override.'
+  4. Batch related questions into ONE question bead (max 3 items per
+     ask) rather than a drip of interrupts.
+  5. While waiting for an answer, keep working on the parts the answer
+     does not change; only add the blocking dep if the answer gates the
+     whole draft.
+
+After answers (or if no user-facing choices are ambiguous — state that
+explicitly in the bead comment), draft:
+
+- proposal.md: Why (grounded in verified current state, not assumptions),
+  What Changes, Impact.
+- design.md: context, goals/non-goals, numbered decisions each with
+  rationale AND alternatives considered, migration/rollout plan when
+  state moves, risk table.
 
 Rules learned from real cycles:
 - Verify "current state" claims against reality (hosts, containers,
   beads) and date-stamp them.
 - Every user-visible trade-off is a numbered decision with alternatives.
+- Record any operator answers in the design as provenance
+  ('operator decision 2026-09-06: ntfy over Telegram').
 - Write for a reader with NO session context: paths, commands, IPs,
   host aliases inline.
 
@@ -163,6 +220,12 @@ requirements, every requirement with at least one #### Scenario:) and
 {{change_dir}}/tasks.md — numbered, sectioned (## 1..N per phase),
 each task one verifiable action. Include a Sign-off criteria section.
 
+If a spec boundary is genuinely ambiguous (e.g. 'must this failure
+case be a requirement or a documented limitation?'), create a question
+bead (--labels human, options + recommendation — protocol as in the
+proposal phase) — but sparingly: by now the design should have resolved
+user-facing choices.
+
 specs encode acceptance (scenarios are testable); tasks encode
 execution order. tasks.md sections become the compiled phase beads,
 so keep sections coherent and sequential. openspec validate
@@ -214,7 +277,7 @@ section order), grafted under this bead. No beads-plan needed — hand-roll:
              inline"
   3. Chain: bd dep <bead-N> --blocks <bead-N+1>
   4. Operator-manual steps inside a section stay in that section's bead;
-     they get surfaced later via 'bd human ask'.
+     they get surfaced later via question beads (--labels human).
 
 Rules: one bead per section (NOT per task — 4-deep micro-beads from the
 compile-tool era could not be operator-reviewed); every description
@@ -244,7 +307,7 @@ real gap in the 2026-09-06 audit):
       (the ebus-monitoring-env orphan lesson).
 - [ ] Expected values stated concretely (monitor counts, IDs) so an
       executor can detect drift instead of trusting numbers.
-- [ ] Operator-manual steps marked and surfaced via 'bd human ask'.
+- [ ] Operator-manual steps marked and surfaced via question beads (--labels human).
 - [ ] Rollback / fallback stated where state moves.
 
 Fix gaps by editing the bead descriptions directly (bd update <id> -d).
@@ -293,7 +356,7 @@ run automagically. Orchestrator duties:
    - the epic bead id and 'bd show/ready/claim/close' workflow,
    - the repo + branch,
    - 'run quality gates before closing any code bead',
-   - 'if an operator input is needed: bd human ask, then continue
+   - 'if an operator input is needed: bd create "Q: ..." --labels human (blocking dep only if it gates everything), then continue
      other ready work — never stall silently',
    - 'if a bead's facts drift from reality, stop that lane and ask'.
 3. One agent walking the dependency chain by default; parallel

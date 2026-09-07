@@ -31,7 +31,7 @@ bd mol pour meow-openspec-v2 \
 
 1. **After the molecule gate** — no more human attention needed until a gate
    fires or an operator-input bead appears. The orchestrator supervises
-   subagents; subagents surface needs via `bd human ask`.
+   subagents; subagents surface needs via question beads (`bd create "Q: …" --labels human`).
 2. **Verify gate** — human re-enters with evidence in hand, merges, and the
    archive runs on acknowledgement.
 
@@ -46,7 +46,7 @@ Orchestrator (the pi session that poured the molecule):
    > read its description fully → execute → run stated quality gates →
    > `bd close <id> --comment "<what you did, evidence>"`. Repeat until no
    > beads are ready. If a bead needs operator input, run
-   > `bd human ask <id> -t "<question>"` and continue with other ready
+   > `bd create "Q: <question> (change <id>)" --labels human` (+ `bd dep <qid> --blocks <id>` only if it gates everything) and continue other ready
    > work. If a bead's stated facts drift from reality, stop that lane and
    > report. Never commit to main; never force-push.
 3. One agent walking the dependency chain by default; parallel lanes only
@@ -65,13 +65,34 @@ history) can execute it. Audit each bead for:
    file paths. ("mini = this Mac", "ssh optiplex-5090" style.)
 4. No orphan references — nothing the earlier beads did not create.
 5. Concrete expected values (counts, IDs, ports) so drift is detectable.
-6. Operator-manual steps explicitly marked + surfaced via `bd human ask`.
+6. Operator-manual steps explicitly marked + surfaced via question beads (`--labels human`).
 7. Rollback/fallback stated wherever state moves or services restart.
 
 Patch gaps with `bd update <id> -d "<fixed description>"`; never leave
 "context TBD" in a bead. Evidence from the 2026-09-06 audit: 4 of 6 beads
 had gaps against this list (orphan sops template, unstated host identity,
 unexplained token provenance, vague NAS/archive references).
+
+## The ask protocol (question beads)
+
+The mechanism verified against bd 1.2.2 (note: `bd human respond` is
+broken there — "storage is nil" — use `bd close --comment`, identical
+semantics):
+
+```sh
+# agent asks:
+bd create "Q: <question> (change <id>)" --labels human \
+  -d "Options: A) …, B) … . Recommended: <X> because <one line>."
+# only if the answer gates further work:
+bd dep <question-id> --blocks <phase-bead-id>
+
+# operator (their queue: bd human list) answers:
+bd close <question-id> --comment "<answer>"
+```
+
+Rules: options + recommendation always; batch ≤3 questions per bead;
+keep working on unaffected parts while waiting; record answers in the
+artifacts as provenance ("operator decision 2026-09-06: …").
 
 ## Why phase beads, not leaf molecules
 
