@@ -50,6 +50,10 @@ The codebase follows a pipeline: **parse → enrich → plan → create beads**.
 Git Flow: `main` (releases), `develop` (integration), `feature/*` (new work from develop).
 
 
+## Searching
+
+- Search with `rg` (ripgrep), never `grep -r` or `find -name`. Details in `AGENTS.md` → "Searching".
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

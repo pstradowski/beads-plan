@@ -36,6 +36,22 @@ cp -rf source dest          # NOT: cp -r source dest
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
 
+## Searching: use `rg`, not `grep`
+
+Use `rg` (ripgrep) for every content search:
+
+```bash
+rg -n "pattern"                 # NOT: grep -rn "pattern" .
+rg -n -t py "pattern"           # filter by file type
+rg -n -g '*.json' "pattern"     # filter by glob
+rg -l "pattern"                 # file names only
+rg --files | rg name            # NOT: find . -name '*name*'
+```
+
+It respects `.gitignore` and skips `.git`, so results are not drowned in
+vendored or generated files. Plain `grep` is fine only for filtering a pipe
+(`cmd | grep x`).
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
