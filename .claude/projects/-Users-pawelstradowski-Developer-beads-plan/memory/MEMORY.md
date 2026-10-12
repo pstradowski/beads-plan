@@ -1,0 +1,1 @@
+- [feedback_absolute_paths.md](feedback_absolute_paths.md) — Use absolute file paths in output so iTerm2 cmd-click works
