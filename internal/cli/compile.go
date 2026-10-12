@@ -114,6 +114,13 @@ func runCompile(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating leaf tasks: %w", err)
 	}
 
+	// Merge section epic IDs so section-level dep edges resolve (#6)
+	for i, s := range taskTree.Sections {
+		if id, ok := subEpicIDs[i]; ok {
+			taskIDs[s.Number] = id
+		}
+	}
+
 	depsCreated, err := p.CreateDependencies(taskIDs, allEdges)
 	if err != nil {
 		return fmt.Errorf("creating dependencies: %w", err)
