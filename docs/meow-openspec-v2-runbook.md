@@ -8,15 +8,20 @@ self-containment lint, and the subagent dispatch protocol. The formula file:
 ## Flow at a glance
 
 ```
-idea ──▶ explore ──▶ draft-pd ──▶ [GATE human: pd] ──▶ independent-review ─┐
-                                    ▲ (reopen on FAIL)                    │
- ◀────────────────────────────────────┘                                    ▼
-                                  draft-st ──▶ [GATE human: st] ──▶ compile (phase beads)
-                                              ──▶ self-containment-lint ──▶ [GATE human: molecule]
-                                              ──▶ dispatch (subagents, feature branch)
-                                              ──▶ verify (openspec --strict) ──▶ [GATE human: verify]
-                                              ──▶ archive ──▶ [GATE human: final]
+idea ──▶ explore ──▶ draft-pd ──▶ independent-review ──▶ [GATE human: pd]
+              ▲            (reopen draft-pd on FAIL, loop    │
+              │             without human involvement)       │
+              └──────────────────────────────────────────────┘ (human sends back)
+                                                             ▼
+                  draft-st ──▶ compile (phase beads) ──▶ self-containment-lint
+                  ──▶ dispatch (subagents, feature branch)        ── no human gates ──
+                  ──▶ verify (openspec --strict) ──▶ [GATE human: verify]
+                  ──▶ archive ──▶ [GATE human: final]
 ```
+
+Human gates (3): `pd-review`, `verify-review`, `archive-review`.
+`pd-review` is the only gate before implementation; v2 earlier also gated
+specs+tasks (`st-review`) and the molecule (`molecule-review`) — removed.
 
 ## Pouring
 
@@ -29,13 +34,16 @@ bd mol pour meow-openspec-v2 \
 
 ## The two "automagic" boundaries
 
-1. **After the molecule gate** — no more human attention needed until a gate
-   fires or an operator-input bead appears. The orchestrator supervises
-   subagents; subagents surface needs via question beads (`bd create "Q: …" --labels human`).
+1. **After the pd gate** — no more human attention needed until an
+   operator-input bead appears or the verify gate fires. Specs/tasks,
+   compile, lint and dispatch run back-to-back. Subagents surface needs
+   via question beads (`bd create "Q: …" --labels human`). The
+   independent review has already run before the gate, so the human reads
+   one reviewed proposal + design.
 2. **Verify gate** — human re-enters with evidence in hand, merges, and the
    archive runs on acknowledgement.
 
-## Dispatch protocol (step 10)
+## Dispatch protocol (dispatch step)
 
 Orchestrator (the pi session that poured the molecule):
 
@@ -54,7 +62,7 @@ Orchestrator (the pi session that poured the molecule):
 4. Poll `bd ready`/notifications rather than sleep-loops; close the dispatch
    bead when all children are closed.
 
-## Self-containment checklist (step 8)
+## Self-containment checklist (lint step; the only review of compiled beads)
 
 A bead is self-contained iff a fresh agent with repo access only (no session
 history) can execute it. Audit each bead for:

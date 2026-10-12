@@ -11,10 +11,14 @@ Changes vs v1:
      gate (operators review the argument as a whole; v1's proposal ->
      specs -> design order forced three separate review rounds).
   2. NEW independent-review step: a FRESH-CONTEXT agent (no session
-     history) reviews proposal+design for logic and alignment after
-     human acceptance. Can reopen the drafting step on FAIL.
-  3. specs + tasks.md are drafted together behind the independent
-     review, then gated once.
+     history) reviews proposal+design for logic and alignment BEFORE
+     the human sees them. On FAIL it reopens the drafting step and the
+     loop repeats without human involvement, so the human gate is shown
+     exactly one reviewed proposal + design.
+  3. pd-review is the LAST gate before implementation. Once the human
+     accepts it, specs + tasks.md are drafted, compiled, linted and
+     dispatched with no further human gate (openspec validate --strict
+     and the self-containment lint are the automated checks).
   4. compile step uses PHASE-LEVEL granularity (one bead per tasks.md
      section, dependency chain preserved) instead of v1's deep nested
      leaf molecules (infra-mol-gqq.3.1.1-style micro-beads proved too
@@ -30,10 +34,9 @@ Changes vs v1:
      acknowledges the verify report.
 
 Phase ordering:
-  explore -> draft-pd -> [GATE pd-review] -> independent-review ->
-  draft-st -> [GATE st-review] -> compile -> self-containment-lint ->
-  [GATE molecule-review] -> dispatch -> verify -> [GATE verify-review]
-  -> archive -> [GATE archive-review]
+  explore -> draft-pd -> independent-review -> [GATE pd-review] ->
+  draft-st -> compile -> self-containment-lint -> dispatch -> verify ->
+  [GATE verify-review] -> archive -> [GATE archive-review]
 
 Instantiate with:
   bd mol pour meow-openspec-v2 \
@@ -157,36 +160,18 @@ Commit both to change/{{change}}. Do NOT draft specs or tasks yet.
 """
 
 #
-# 3. GATE — human accepts proposal + design (iterate).
-#
-[[steps]]
-id = "pd-review"
-title = "Human review: accept proposal + design for {{change}}"
-type = "task"
-depends_on = ["draft-pd"]
-gate = { type = "human" }
-labels = ["meow:gate", "meow:mandatory"]
-description = """
-Mandatory human review gate for proposal.md + design.md.
-
-To resolve:
-1. Read both files at {{change_dir}}/.
-2. Challenge assumptions; iterate with the drafting agent until the
-   decisions are right (reopen the draft-pd bead as many times as
-   needed: bd gate resolve only when you would sign your name on it).
-3. Run: bd gate resolve <gate-id> to accept.
-"""
-
-#
 # 4. Independent fresh-context review.
 #
 [[steps]]
 id = "independent-review"
 title = "Independent review: fresh-context agent audits proposal + design"
 type = "task"
-depends_on = ["pd-review"]
+depends_on = ["draft-pd"]
 labels = ["meow:phase", "meow:independent-review"]
 description = """
+Runs BEFORE the human gate, so the operator is shown one proposal +
+design that has already survived an independent audit.
+
 A FRESH-CONTEXT reviewer agent ({{review_agent}}) — NOT the session
 that drafted the documents, no shared conversation history — reads
 proposal.md and design.md cold and checks:
@@ -202,8 +187,39 @@ proposal.md and design.md cold and checks:
   not be (alerting lesson, 2026-09-06)?
 
 Verdict in the bead comment: PASS or FAIL with concrete revision notes.
-On FAIL: bd reopen <draft-pd-bead-id> with the notes attached, and stop
-— the gate will re-block. On PASS: close this bead.
+On FAIL: bd reopen <draft-pd-bead-id> with the notes attached, revise,
+then re-run this review with a NEW fresh-context reviewer (reopen this
+bead too). Repeat until PASS; do not surface a FAIL draft to the human.
+If it still FAILs after 3 rounds, or the notes need a preference only
+the operator can give, create a question bead (--labels human, options
++ recommendation) instead of looping further. On PASS: close this bead
+with the verdict and a one-paragraph summary of review rounds, which the
+human reads at the gate.
+"""
+
+#
+# 3. GATE — human accepts proposal + design (iterate).
+#
+[[steps]]
+id = "pd-review"
+title = "Human review: accept proposal + design for {{change}}"
+type = "task"
+depends_on = ["independent-review"]
+gate = { type = "human" }
+labels = ["meow:gate", "meow:mandatory"]
+description = """
+Mandatory human review gate for proposal.md + design.md, and the ONLY
+human gate before implementation. Accepting it authorizes specs, tasks,
+compile, lint and dispatch to run to completion unattended.
+
+To resolve:
+1. Read both files at {{change_dir}}/ and the independent-review
+   verdict (bd show <independent-review-bead-id>).
+2. Challenge assumptions; iterate with the drafting agent until the
+   decisions are right (reopen the draft-pd bead as many times as
+   needed, which re-runs independent-review; bd gate resolve only when you
+   would sign your name on it — nothing after this waits for you).
+3. Run: bd gate resolve <gate-id> to accept.
 """
 
 #
@@ -213,45 +229,28 @@ On FAIL: bd reopen <draft-pd-bead-id> with the notes attached, and stop
 id = "draft-st"
 title = "Draft specs/ deltas and tasks.md for {{change}}"
 type = "task"
-depends_on = ["independent-review"]
+depends_on = ["pd-review"]
 labels = ["meow:phase", "meow:draft-st"]
 description = """
 Draft {{change_dir}}/specs/<capability>/spec.md (ADDED/MODIFIED
 requirements, every requirement with at least one #### Scenario:) and
 {{change_dir}}/tasks.md — numbered, sectioned (## 1..N per phase),
 each task one verifiable action. Include a Sign-off criteria section.
+NO human gate follows this step: check that every requirement has
+scenarios and every task maps to a requirement or a migration /
+verification step, and mark operator-manual steps explicitly.
 
 If a spec boundary is genuinely ambiguous (e.g. 'must this failure
 case be a requirement or a documented limitation?'), create a question
 bead (--labels human, options + recommendation — protocol as in the
-proposal phase) — but sparingly: by now the design should have resolved
-user-facing choices.
+proposal phase) — but sparingly: the accepted design should already have
+resolved user-facing choices. Never contradict the accepted
+proposal/design; if the specs or tasks would force that, ask instead.
 
 specs encode acceptance (scenarios are testable); tasks encode
 execution order. tasks.md sections become the compiled phase beads,
 so keep sections coherent and sequential. openspec validate
 {{change}} --strict must pass. Commit to change/{{change}}.
-"""
-
-#
-# 6. GATE — human accepts specs + tasks.
-#
-[[steps]]
-id = "st-review"
-title = "Human review: accept specs + tasks for {{change}}"
-type = "task"
-depends_on = ["draft-st"]
-gate = { type = "human" }
-labels = ["meow:gate", "meow:mandatory"]
-description = """
-Mandatory human review gate for the specs deltas and tasks.md.
-
-To resolve:
-1. Read specs/ and tasks.md at {{change_dir}}/.
-2. Check every requirement has scenarios; every task maps to a
-   requirement or a migration/verification step; operator-manual
-   steps are explicitly marked.
-3. Run: bd gate resolve <gate-id>.
 """
 
 #
@@ -261,7 +260,7 @@ To resolve:
 id = "compile"
 title = "Compile phase-level execution beads for {{change}}"
 type = "task"
-depends_on = ["st-review"]
+depends_on = ["draft-st"]
 labels = ["meow:phase", "meow:compile"]
 description = """
 Compile {{change_dir}}/tasks.md into an execution epic with PHASE-LEVEL
@@ -269,7 +268,7 @@ beads (one bead per tasks.md section, strict dependency chain in
 section order), grafted under the molecule's DISPATCH bead — not this
 one. Dispatch carries the all-children gate, so it closes only when the
 execution work is done, while this bead closes as soon as compiling is
-done (lint and molecule-review depend on it). No beads-plan needed —
+done (lint depends on it). No beads-plan needed —
 hand-roll:
 
   0. MOL=$(bd show <this-bead-id> --json | jq -r '.[0].parent')
@@ -319,28 +318,9 @@ real gap in the 2026-09-06 audit):
 - [ ] Rollback / fallback stated where state moves.
 
 Fix gaps by editing the bead descriptions directly (bd update <id> -d).
-Close with a summary of what was patched.
-"""
-
-#
-# 9. GATE — human accepts the molecule + dispatch plan.
-#
-[[steps]]
-id = "molecule-review"
-title = "Human review: accept execution molecule + dispatch plan"
-type = "task"
-depends_on = ["self-containment-lint"]
-gate = { type = "human" }
-labels = ["meow:gate", "meow:mandatory"]
-description = """
-Mandatory human review gate before implementation starts.
-
-To resolve:
-1. bd show <epic-id> — review every phase bead, the dependency chain,
-   and the lint summary.
-2. Confirm the dispatch plan: which subagent role ({{impl_agent}}),
-   branch change/{{change}}, single walker vs per-lane agents.
-3. Run: bd gate resolve <gate-id>. Nothing executes before this.
+Close with a summary of what was patched. This lint is the only review
+of the compiled beads (no human molecule gate): if a gap cannot be fixed
+from the accepted design, ask via a question bead before dispatch.
 """
 
 #
@@ -350,12 +330,13 @@ To resolve:
 id = "dispatch"
 title = "Dispatch implementation to subagent(s) on change/{{change}}"
 type = "task"
-depends_on = ["molecule-review"]
+depends_on = ["self-containment-lint"]
 labels = ["meow:phase", "meow:dispatch"]
 waits_for = "all-children"
 description = """
-Hand the execution epic to implementation subagent(s) and let them
-run automagically. Orchestrator duties:
+Starts immediately once lint closes — no human gate. Hand the execution
+epic to implementation subagent(s) and let them run automagically.
+Orchestrator duties:
 
 1. Ensure feature branch change/{{change}} exists; implementation commits
    ONLY there (never main — the 2026-09-06 concurrent-session rebase
