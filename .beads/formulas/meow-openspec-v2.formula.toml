@@ -24,6 +24,8 @@ Changes vs v1:
   6. NEW dispatch step: implementation is handed to subagent(s) with
      fresh context; all code goes to a feature branch; operator inputs
      surface via question beads (--labels human, answered via bd close --comment), never by stalling silently.
+     (Epic is parented under dispatch, whose all-children gate waits for
+     the work; compile itself closes as soon as the beads exist.)
   7. verify uses openspec validate --strict; archive only after a human
      acknowledges the verify report.
 
@@ -46,9 +48,8 @@ phase = "liquid"
 [vars]
 change_dir = { required = true, description = "Path to the OpenSpec change directory, e.g. openspec/changes/my-change" }
 change = { default = "<change>", description = "Change identifier used in titles and descriptions" }
-branch = { default = "change/{{change}}", description = "Feature branch for all artifacts and implementation code" }
-impl_agent = { default = "pi-executor", description = "Subagent role name for implementation dispatch" }
-review_agent = { default = "pi-reviewer", description = "Subagent role name for the independent fresh-context review" }
+impl_agent = { default = "pi-executor", description = "Subagent role name for implementation dispatch (fallback: general-purpose)" }
+review_agent = { default = "pi-reviewer", description = "Subagent role name for the independent fresh-context review (fallback: general-purpose)" }
 
 #
 # 1. Explore — optional context-gathering phase with no gate.
@@ -90,7 +91,7 @@ depends_on = ["explore"]
 labels = ["meow:phase", "meow:draft-pd"]
 description = """
 Draft {{change_dir}}/proposal.md and {{change_dir}}/design.md TOGETHER,
-on the feature branch {{branch}}.
+on the feature branch change/{{change}}.
 
 BEFORE WRITING, ask about every user-facing choice that is cheap to
 state now and expensive to discover later. The ask protocol (mechanics
@@ -152,7 +153,7 @@ Rules learned from real cycles:
 - Write for a reader with NO session context: paths, commands, IPs,
   host aliases inline.
 
-Commit both to {{branch}}. Do NOT draft specs or tasks yet.
+Commit both to change/{{change}}. Do NOT draft specs or tasks yet.
 """
 
 #
@@ -186,9 +187,9 @@ type = "task"
 depends_on = ["pd-review"]
 labels = ["meow:phase", "meow:independent-review"]
 description = """
-A FRESH-CONTEXT reviewer agent — NOT the session that drafted the
-documents, no shared conversation history — reads proposal.md and
-design.md cold and checks:
+A FRESH-CONTEXT reviewer agent ({{review_agent}}) — NOT the session
+that drafted the documents, no shared conversation history — reads
+proposal.md and design.md cold and checks:
 
 - Internal logic: does each decision's rationale hold? Do goals
   actually follow from the Why?
@@ -229,7 +230,7 @@ user-facing choices.
 specs encode acceptance (scenarios are testable); tasks encode
 execution order. tasks.md sections become the compiled phase beads,
 so keep sections coherent and sequential. openspec validate
-{{change}} --strict must pass. Commit to {{branch}}.
+{{change}} --strict must pass. Commit to change/{{change}}.
 """
 
 #
@@ -262,14 +263,20 @@ title = "Compile phase-level execution beads for {{change}}"
 type = "task"
 depends_on = ["st-review"]
 labels = ["meow:phase", "meow:compile"]
-waits_for = "all-children"
 description = """
 Compile {{change_dir}}/tasks.md into an execution epic with PHASE-LEVEL
 beads (one bead per tasks.md section, strict dependency chain in
-section order), grafted under this bead. No beads-plan needed — hand-roll:
+section order), grafted under the molecule's DISPATCH bead — not this
+one. Dispatch carries the all-children gate, so it closes only when the
+execution work is done, while this bead closes as soon as compiling is
+done (lint and molecule-review depend on it). No beads-plan needed —
+hand-roll:
 
+  0. MOL=$(bd show <this-bead-id> --json | jq -r '.[0].parent')
+     DISPATCH=$(bd list --all --parent $MOL --label meow:dispatch \
+       --json | jq -r '.[0].id')
   1. EPIC=$(bd create "Execute {{change}}" -t epic \
-       --parent <this-bead-id> -p 1 -d "...")
+       --parent $DISPATCH -p 1 -d "...")
   2. For each '## N. <section>' in tasks.md, in order:
        bd create "Phase N: <section title>" -t task -p 1 --parent $EPIC \
          -d "openspec tasks section N: paste the section's tasks verbatim
@@ -282,7 +289,8 @@ section order), grafted under this bead. No beads-plan needed — hand-roll:
 Rules: one bead per section (NOT per task — 4-deep micro-beads from the
 compile-tool era could not be operator-reviewed); every description
 self-contained (the lint step audits this); tasks.md stays the
-checkbox source of truth.
+checkbox source of truth. Close this bead once the epic and phase
+beads exist; do NOT wait for them to be executed.
 """
 
 #
@@ -331,7 +339,7 @@ To resolve:
 1. bd show <epic-id> — review every phase bead, the dependency chain,
    and the lint summary.
 2. Confirm the dispatch plan: which subagent role ({{impl_agent}}),
-   branch {{branch}}, single walker vs per-lane agents.
+   branch change/{{change}}, single walker vs per-lane agents.
 3. Run: bd gate resolve <gate-id>. Nothing executes before this.
 """
 
@@ -340,7 +348,7 @@ To resolve:
 #
 [[steps]]
 id = "dispatch"
-title = "Dispatch implementation to subagent(s) on {{branch}}"
+title = "Dispatch implementation to subagent(s) on change/{{change}}"
 type = "task"
 depends_on = ["molecule-review"]
 labels = ["meow:phase", "meow:dispatch"]
@@ -349,10 +357,11 @@ description = """
 Hand the execution epic to implementation subagent(s) and let them
 run automagically. Orchestrator duties:
 
-1. Ensure feature branch {{branch}} exists; implementation commits
+1. Ensure feature branch change/{{change}} exists; implementation commits
    ONLY there (never main — the 2026-09-06 concurrent-session rebase
    conflict is the cautionary tale).
-2. Spawn subagent(s) with FRESH context, prompt containing exactly:
+2. Spawn {{impl_agent}} subagent(s) with FRESH context, prompt
+   containing exactly:
    - the epic bead id and 'bd show/ready/claim/close' workflow,
    - the repo + branch,
    - 'run quality gates before closing any code bead',
@@ -361,7 +370,15 @@ run automagically. Orchestrator duties:
    - 'if a bead's facts drift from reality, stop that lane and ask'.
 3. One agent walking the dependency chain by default; parallel
    subagents only for lanes the molecule marks independent.
-4. Close this bead when all execution-bead children are closed.
+4. Close this bead when all execution-bead children are closed (the
+   compile step parented the epic here; the all-children gate
+   enforces it).
+
+AGENT FALLBACK: {{impl_agent}} / {{review_agent}} are role names that
+not every session provides. If the named role is unavailable, use a
+general-purpose subagent with the same prompt (it must still start with
+fresh context), or pour with --var impl_agent=<role> /
+--var review_agent=<role>. Note the substitution in this bead's comment.
 """
 
 #
@@ -374,7 +391,7 @@ type = "task"
 depends_on = ["dispatch"]
 labels = ["meow:phase", "meow:verify"]
 description = """
-Verification pass on {{branch}}:
+Verification pass on change/{{change}}:
 
 - openspec validate {{change}} --strict (capture output)
 - every tasks.md box ticked; every Sign-off criterion met with
@@ -403,7 +420,7 @@ Mandatory human review gate for the verify report.
 
 To resolve:
 1. Read the verify bead's evidence.
-2. Decide merge: PR from {{branch}} to main (squash or rebase per
+2. Decide merge: PR from change/{{change}} to main (squash or rebase per
    repo convention), or send back with notes.
 3. Run: bd gate resolve <gate-id>.
 """
@@ -419,7 +436,7 @@ depends_on = ["verify-review"]
 labels = ["meow:phase", "meow:archive"]
 description = """
 Finalize:
-- merge {{branch}} (or confirm merge done at the verify gate)
+- merge change/{{change}} (or confirm merge done at the verify gate)
 - openspec archive {{change}} (moves to archive/, merges spec deltas)
 - commit archive move + push (both remotes where present)
 - bd dolt push
